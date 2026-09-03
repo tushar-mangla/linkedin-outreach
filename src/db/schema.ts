@@ -1,222 +1,186 @@
-import {
-  pgTable,
-  uuid,
-  varchar,
-  timestamp,
-  text,
-  jsonb,
-  integer,
-  boolean,
-  primaryKey,
-} from "drizzle-orm/pg-core";
-import { relations } from "drizzle-orm";
 
-// Core Tables
+import { pgTable, text, timestamp, uuid, varchar, json, boolean, integer, pgEnum, uniqueIndex, real } from 'drizzle-orm/pg-core';
 
-export const tenants = pgTable("tenants", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  name: varchar("name", { length: 255 }).notNull(),
-  createdAt: timestamp("created_at").notNull(),
-  updatedAt: timestamp("updated_at").notNull(),
+export const prospectStageEnum = pgEnum('prospect_stage', [
+  'INGESTED',
+  'FILTERED_OUT',
+  'EVALUATED',
+  'REQUIRES_REVIEW',
+  'READY_FOR_CAMPAIGN',
+  'APPROVED_FOR_OUTREACH',
+  'REJECTED',
+]);
+
+export const prospects = pgTable('prospects', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull(),
+  linkedinUrl: varchar('linkedin_url', { length: 255 }).notNull(),
+  normalizedLinkedinUrl: text('normalized_linkedin_url').notNull(),
+  currentStage: prospectStageEnum('current_stage').notNull().default('INGESTED'),
+  customAttributes: json('custom_attributes'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+}, (table) => {
+  return {
+    tenantIdNormalizedUrlIndex: uniqueIndex('tenant_id_normalized_url_idx').on(table.tenantId, table.normalizedLinkedinUrl),
+  };
 });
 
-export const users = pgTable("users", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  tenantId: uuid("tenant_id")
-    .references(() => tenants.id)
-    .notNull(),
-  email: varchar("email", { length: 255 }).unique().notNull(),
-  createdAt: timestamp("created_at").notNull(),
-  updatedAt: timestamp("updated_at").notNull(),
+export const candidates = prospects;
+
+export const dailyActionBudgets = pgTable('daily_action_budgets', {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id').notNull(),
+    accountId: uuid('account_id').notNull(),
+    actionType: varchar('action_type', { length: 50 }).notNull(),
+    budgetDate: timestamp('budget_date').notNull(),
+    limit: integer('limit').notNull(),
+    reservedCount: integer('reserved_count').default(0).notNull(),
+    completedCount: integer('completed_count').default(0).notNull(),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+}, (table) => {
+    return {
+        tenantIdAccountIdActionTypeBudgetDateIndex: uniqueIndex('tenant_id_account_id_action_type_budget_date_idx').on(table.tenantId, table.accountId, table.actionType, table.budgetDate),
+    };
 });
 
-export const linkedInAccounts = pgTable("linkedin_accounts", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  tenantId: uuid("tenant_id")
-    .references(() => tenants.id)
-    .notNull(),
-  username: varchar("username", { length: 255 }).notNull(),
-  // Encrypted password - not stored in plaintext
-  encryptedPassword: text("encrypted_password").notNull(),
-  createdAt: timestamp("created_at").notNull(),
-  updatedAt: timestamp("updated_at").notNull(),
+export const budgetReservations = pgTable('budget_reservations', {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id').notNull(),
+    accountId: uuid('account_id').notNull(),
+    actionType: varchar('action_type', { length: 50 }).notNull(),
+    budgetDate: timestamp('budget_date').notNull(),
+    status: varchar('status', { length: 20 }).notNull().default('RESERVED'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
 
-export const browserSessions = pgTable("browser_sessions", {
-    id: uuid("id").primaryKey().defaultRandom(),
-    linkedInAccountId: uuid("linkedin_account_id").references(() => linkedInAccounts.id).notNull(),
-    tenantId: uuid("tenant_id").references(() => tenants.id).notNull(),
-    // Cookies, local storage, etc.
-    sessionData: jsonb("session_data").notNull(),
-    createdAt: timestamp("created_at").defaultNow().notNull(),
-    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+export const icpDefinitions = pgTable('icp_definitions', {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id').notNull(),
+    name: varchar('name', { length: 255 }).notNull(),
+    criteria: json('criteria').notNull(),
+    isActive: boolean('is_active').default(true).notNull(),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
 
+export const recruitmentRoles = icpDefinitions;
 
-// Prospect & Campaign Tables
-
-export const prospects = pgTable("prospects", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  tenantId: uuid("tenant_id")
-    .references(() => tenants.id)
-    .notNull(),
-  linkedInUrl: varchar("linkedin_url", { length: 512 }).unique().notNull(),
-  profileData: jsonb("profile_data"),
-  createdAt: timestamp("created_at").notNull(),
-  updatedAt: timestamp("updated_at").notNull(),
+export const importBatches = pgTable('import_batches', {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id').notNull(),
+    icpDefinitionId: uuid('icp_definition_id').references(() => icpDefinitions.id),
+    filename: varchar('filename', { length: 255 }).notNull(),
+    totalRows: integer('total_rows').notNull(),
+    processedRows: integer('processed_rows').default(0).notNull(),
+    qualifiedCount: integer('qualified_count').default(0).notNull(),
+    rejectedCount: integer('rejected_count').default(0).notNull(),
+    reviewCount: integer('review_count').default(0).notNull(),
+    status: varchar('status', { length: 50 }).notNull(),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
 
-export const campaigns = pgTable("campaigns", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  tenantId: uuid("tenant_id")
-    .references(() => tenants.id)
-    .notNull(),
-  name: varchar("name", { length: 255 }).notNull(),
-  sequenceDefinitionId: uuid("sequence_definition_id").references(() => sequenceDefinitions.id).notNull(),
-  createdAt: timestamp("created_at").notNull(),
-  updatedAt: timestamp("updated_at").notNull(),
+export const icpEvaluations = pgTable('icp_evaluations', {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id').notNull(),
+    prospectId: uuid('prospect_id').references(() => prospects.id),
+    icpDefinitionId: uuid('icp_definition_id').references(() => icpDefinitions.id),
+    importBatchId: uuid('import_batch_id').references(() => importBatches.id),
+    score: integer('score'),
+    confidence: real('confidence'),
+    fitBreakdown: json('fit_breakdown'),
+    evidence: text('evidence'),
+    reasoning: text('reasoning'),
+    status: varchar('status', { length: 50 }).notNull(),
+    evaluatedBy: varchar('evaluated_by', { length: 255 }),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
 });
 
-export const sequenceDefinitions = pgTable("sequence_definitions", {
-    id: uuid("id").primaryKey().defaultRandom(),
-    tenantId: uuid("tenant_id").references(() => tenants.id).notNull(),
-    name: varchar("name", { length: 255 }).notNull(),
-    createdAt: timestamp("created_at").defaultNow().notNull(),
-    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+export const candidateEvaluations = icpEvaluations;
+
+export const reviewDecisions = pgTable('review_decisions', {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id').notNull(),
+    prospectId: uuid('prospect_id').notNull().references(() => prospects.id),
+    decision: varchar('decision', { length: 20 }).notNull(),
+    reason: text('reason').notNull(),
+    operatorId: varchar('operator_id', { length: 255 }).notNull(),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
 });
 
-export const sequenceSteps = pgTable("sequence_steps", {
-    id: uuid("id").primaryKey().defaultRandom(),
-    sequenceDefinitionId: uuid("sequence_definition_id").references(() => sequenceDefinitions.id).notNull(),
-    tenantId: uuid("tenant_id").references(() => tenants.id).notNull(),
-    stepNumber: integer("step_number").notNull(),
-    actionType: varchar("action_type", { length: 50 }).notNull(), // e.g., 'CONNECTION_REQUEST', 'MESSAGE', 'LIKE'
-    actionParams: jsonb("action_params"),
-    delayInDays: integer("delay_in_days").notNull().default(0),
-    createdAt: timestamp("created_at").notNull(),
+export const auditEvents = pgTable('audit_events', {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id').notNull(),
+    eventType: varchar('event_type', { length: 100 }).notNull(),
+    entityType: varchar('entity_type', { length: 100 }).notNull(),
+    entityId: uuid('entity_id').notNull(),
+    payload: json('payload').notNull(),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
 });
 
-export const campaignEnrollments = pgTable("campaign_enrollments", {
-    id: uuid("id").primaryKey().defaultRandom(),
-    campaignId: uuid("campaign_id").references(() => campaigns.id).notNull(),
-    prospectId: uuid("prospect_id").references(() => prospects.id).notNull(),
-    tenantId: uuid("tenant_id").references(() => tenants.id).notNull(),
-    status: varchar("status", { length: 50 }).notNull().default('active'), // e.g., 'active', 'paused', 'completed', 'failed'
-    currentStep: integer("current_step").notNull().default(1),
-    createdAt: timestamp("created_at").defaultNow().notNull(),
-    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+export const accountLeases = pgTable('account_leases', {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id').notNull(),
+    accountId: uuid('account_id').notNull(),
+    workerId: varchar('worker_id', { length: 255 }).notNull(),
+    leaseToken: text('lease_token').default('').notNull(),
+    expiresAt: timestamp('expires_at').notNull(),
+    heartbeatAt: timestamp('heartbeat_at'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+}, (table) => {
+    return {
+        tenantIdAccountIdIndex: uniqueIndex('tenant_id_account_id_idx').on(table.tenantId, table.accountId),
+    };
 });
 
-
-// Execution & Safety Tables
-
-export const scheduledActions = pgTable("scheduled_actions", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  tenantId: uuid("tenant_id")
-    .references(() => tenants.id)
-    .notNull(),
-  enrollmentId: uuid("enrollment_id").references(() => campaignEnrollments.id).notNull(),
-  sequenceStepId: uuid("sequence_step_id").references(() => sequenceSteps.id).notNull(),
-  linkedInAccountId: uuid("linkedin_account_id").references(() => linkedInAccounts.id).notNull(),
-  scheduledTime: timestamp("scheduled_time").notNull(),
-  status: varchar("status", { length: 50 }).notNull().default("pending"), // 'pending', 'completed', 'failed', 'skipped'
-  executedAt: timestamp("executed_at"),
-  executionResult: jsonb("execution_result"),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
+export const campaigns = pgTable('campaigns', {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id').notNull(),
+    name: varchar('name', { length: 255 }).notNull(),
+    roleId: uuid('role_id').references(() => icpDefinitions.id),
+    status: varchar('status', { length: 50 }).notNull().default('ACTIVE'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
 
-export const accountLeases = pgTable("account_leases", {
-    id: uuid("id").primaryKey().defaultRandom(),
-    linkedInAccountId: uuid("linkedin_account_id").references(() => linkedInAccounts.id).notNull(),
-    tenantId: uuid("tenant_id").references(() => tenants.id).notNull(),
-    leaseHolderId: varchar("lease_holder_id", { length: 255 }).notNull(), // e.g., worker ID
-    expiresAt: timestamp("expires_at").notNull(),
-    createdAt: timestamp("created_at").defaultNow().notNull(),
+export const sequenceDefinitions = pgTable('sequence_definitions', {
+    id: uuid('id').primaryKey().defaultRandom(),
+    campaignId: uuid('campaign_id').notNull().references(() => campaigns.id),
+    stepOrder: integer('step_order').notNull(),
+    actionType: varchar('action_type', { length: 50 }).notNull(),
+    delayDays: integer('delay_days').default(0).notNull(),
+    template: text('template'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
 });
 
-export const approvals = pgTable("approvals", {
-    id: uuid("id").primaryKey().defaultRandom(),
-    tenantId: uuid("tenant_id").references(() => tenants.id).notNull(),
-    resourceId: uuid("resource_id").notNull(), // e.g., scheduledActionId
-    resourceType: varchar("resource_type", { length: 50 }).notNull(), // e.g., 'ScheduledAction'
-    status: varchar("status", { length: 50 }).notNull().default("pending"), // 'pending', 'approved', 'rejected'
-    approvedBy: uuid("approved_by").references(() => users.id),
-    approvedAt: timestamp("approved_at"),
-    createdAt: timestamp("created_at").defaultNow().notNull(),
+export const campaignEnrollments = pgTable('campaign_enrollments', {
+    id: uuid('id').primaryKey().defaultRandom(),
+    campaignId: uuid('campaign_id').notNull().references(() => campaigns.id),
+    prospectId: uuid('prospect_id').notNull().references(() => prospects.id),
+    currentStep: integer('current_step').default(0).notNull(),
+    status: varchar('status', { length: 50 }).notNull().default('ENROLLED'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
 
-export const auditEvents = pgTable("audit_events", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  tenantId: uuid("tenant_id")
-    .references(() => tenants.id)
-    .notNull(),
-  userId: uuid("user_id").references(() => users.id),
-  event_type: varchar("event_type", { length: 255 }).notNull(),
-  payload: jsonb("payload"),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
+export const scheduledActions = pgTable('scheduled_actions', {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id').notNull(),
+    campaignEnrollmentId: uuid('campaign_enrollment_id').references(() => campaignEnrollments.id),
+    prospectId: uuid('prospect_id').notNull().references(() => prospects.id),
+    accountId: uuid('account_id').notNull(),
+    actionType: varchar('action_type', { length: 50 }).notNull(),
+    payload: json('payload'),
+    scheduledFor: timestamp('scheduled_for').notNull(),
+    status: varchar('status', { length: 50 }).notNull().default('PENDING'),
+    idempotencyKey: varchar('idempotency_key', { length: 255 }).notNull().unique(),
+    claimedBy: varchar('claimed_by', { length: 255 }),
+    claimedAt: timestamp('claimed_at'),
+    completedAt: timestamp('completed_at'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
 
-
-// Relations
-
-export const usersRelations = relations(users, ({ one }) => ({
-    tenant: one(tenants, {
-        fields: [users.tenantId],
-        references: [tenants.id],
-    }),
-}));
-
-export const linkedInAccountsRelations = relations(linkedInAccounts, ({ one }) => ({
-    tenant: one(tenants, {
-        fields: [linkedInAccounts.tenantId],
-        references: [tenants.id],
-    }),
-}));
-
-export const campaignsRelations = relations(campaigns, ({ one }) => ({
-    tenant: one(tenants, {
-        fields: [campaigns.tenantId],
-        references: [tenants.id],
-    }),
-    sequenceDefinition: one(sequenceDefinitions, {
-        fields: [campaigns.sequenceDefinitionId],
-        references: [sequenceDefinitions.id],
-    }),
-}));
-
-export const sequenceDefinitionsRelations = relations(sequenceDefinitions, ({ many }) => ({
-    steps: many(sequenceSteps),
-}));
-
-export const sequenceStepsRelations = relations(sequenceSteps, ({ one }) => ({
-    sequenceDefinition: one(sequenceDefinitions, {
-        fields: [sequenceSteps.sequenceDefinitionId],
-        references: [sequenceDefinitions.id],
-    }),
-}));
-
-export const campaignEnrollmentsRelations = relations(campaignEnrollments, ({ one }) => ({
-    campaign: one(campaigns, {
-        fields: [campaignEnrollments.campaignId],
-        references: [campaigns.id],
-    }),
-    prospect: one(prospects, {
-        fields: [campaignEnrollments.prospectId],
-        references: [prospects.id],
-    }),
-}));
-
-export const scheduledActionsRelations = relations(scheduledActions, ({ one }) => ({
-    enrollment: one(campaignEnrollments, {
-        fields: [scheduledActions.enrollmentId],
-        references: [campaignEnrollments.id],
-    }),
-    step: one(sequenceSteps, {
-        fields: [scheduledActions.sequenceStepId],
-        references: [sequenceSteps.id],
-    }),
-    account: one(linkedInAccounts, {
-        fields: [scheduledActions.linkedInAccountId],
-        references: [linkedInAccounts.id],
-    }),
-}));

@@ -1,7 +1,9 @@
+
 {
   "compilerOptions": {
-    "target": "ES2020",
+    "target": "ES2022",
     "module": "NodeNext",
+    "moduleResolution": "NodeNext",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
@@ -11,10 +13,8 @@
     "baseUrl": ".",
     "paths": {
       "@/*": ["src/*"]
-    },
-    "moduleResolution": "NodeNext",
-    "types": ["node", "vitest/globals"]
+    }
   },
   "include": ["src/**/*.ts"],
-  "exclude": ["node_modules", "tests"]
+  "exclude": ["node_modules"]
 }

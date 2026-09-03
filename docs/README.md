@@ -1,51 +1,52 @@
-# LinkedIn Outreach Agent: Production Architecture Specification
+# RecruitmentOS Documentation
 
-This documentation suite provides a granular, engineering-focused overview of the LinkedIn Outreach Agent system. It is intended for developers, architects, and technical stakeholders.
+RecruitmentOS is a multi-tenant, evidence-driven LinkedIn engagement and outreach system. It qualifies target prospects, prepares approved engagement and messaging, runs conditional sequences, stops outreach when a prospect replies or opts out, and measures commercial outcomes.
 
-## 1. System Overview & Boundaries
+This repository is implementing the product incrementally. Documentation describes the intended contract for each release; it does not imply that every planned capability already exists in the codebase.
 
-The LinkedIn Outreach Agent is a specialized system for executing targeted, risk-reduced, and effective outreach campaigns on LinkedIn. It is a fork of the `linkedin-outreach-agent` project, heavily modified to incorporate robust safety mechanisms, production-grade concurrency patterns, advanced AI-driven content generation, and a sophisticated, decoupled state-machine architecture.
+## Canonical Architecture
 
-### Core Technical Pillars:
+- **Runtime:** Node.js and TypeScript
+- **API:** Express
+- **Frontend:** React and Vite
+- **Database:** PostgreSQL, locally or through Neon
+- **ORM:** Drizzle ORM
+- **Validation:** Zod
+- **Testing:** Vitest
+- **AI:** Provider interface, with Gemini initially and a fake provider for offline tests
+- **Execution:** FakeExecutor and ManualExecutor first; Playwright begins only in Feature 5
 
-*   **Infrastructure**:
-    *   **Compute**: Node.js / TypeScript runtime.
-    *   **Database**: Neon Serverless PostgreSQL, accessed via Drizzle ORM for type-safe queries.
-    *   **AI Layer**: Local Ollama instance running a fine-tuned LLaMA-3-8B-Instruct model, with strict Zod-based schema validation for all inputs and outputs.
-    *   **Automation**: Playwright for reliable, persistent browser automation.
+The application is custom code. External repositories are behavioral or architectural references. Code may be adapted only when its license permits it, required notices are preserved, and provenance is recorded. GPL or restricted-license code is not incorporated into the proprietary core without explicit approval.
 
-*   **System Boundaries**:
-    *   This system is a **standalone agent**, not a SaaS platform, designed for single-tenant operation.
-    *   It operates with a **"human-in-the-loop"** philosophy, requiring explicit approval for all generated outreach actions before execution.
-    *   It is framed as **risk-reduced, human-in-the-loop automation**, not "undetectable" automation. The goal is to minimize risk through multiple layers of safety, not to eliminate it entirely.
+## Product Boundaries
 
-*   **Core Architectural Principles**:
-    *   **Decoupled State**: The lifecycle state of a prospect in a campaign (`CampaignMember`) is strictly separated from the state of an executable task (`OutreachAction`). This prevents state corruption and allows for robust error recovery and retries.
-    *   **Transactional Integrity**: All state changes and resource allocations (like daily action budgets) are performed within atomic database transactions to ensure consistency, even under concurrent operation.
-    *   **Idempotency**: Actions are designed to be idempotent, using unique keys to prevent duplicate execution.
-    *   **Immutability**: An `audit_ledger` provides an immutable, append-only record of every significant event in the system.
+- Features 0 through 4 must work without live LinkedIn activity.
+- Human approval is required for generated engagement and outbound messages.
+- Profile editing is advisory; the system does not automatically edit a LinkedIn profile.
+- Feature 5 introduces supervised browser execution one capability at a time.
+- Safety controls reduce operational risk but do not make automation undetectable or risk-free.
+- Raw domain and audit events remain the source of truth for later analytics.
 
-## 2. MVP Scope & Phasing
+## Release Index
 
-The project is phased to deliver a stable core product first, followed by iterative enhancements.
+1. [Feature 0: Core Foundation](plans/0.0-foundation.md) - Multi-tenant persistence, isolation, audit, budgets, leases, approvals, and action infrastructure.
+2. [Feature 1: ICP Pipeline](plans/0.1-icp.md) - Persistent prospect ingestion, deterministic filtering, AI qualification, review, and campaign readiness.
+3. [Feature 2: Engagement](plans/0.2-engagement.md) - Profile audit and approved, evidence-grounded engagement recommendations.
+4. [Feature 3: Messaging](plans/0.3-messaging.md) - Evidence-based connection notes, DMs, follow-ups, critique, and approval.
+5. [Feature 4: Sequences](plans/0.4-sequences.md) - Versioned conditional campaigns, scheduled actions, and stop-on-reply behavior.
+6. [Feature 5: Supervised Execution](plans/0.5-supervised-execution.md) - Controlled Playwright execution with leases, budgets, health checks, and kill switches.
+7. [Feature 6: Analytics](plans/0.6-kpis-and-optimization.md) - Reproducible funnel metrics, rollups, experiments, and dashboard views.
 
-### MVP Scope:
-*   **Single Account Operation**: Manages one LinkedIn account.
-*   **Core Pipeline**: Includes CSV import, a full profile acquisition pipeline, deterministic and AI-based ICP scoring.
-*   **Basic Campaign**: Supports one active campaign with a sequence of (1) Connection Request + (2) Two Follow-up Messages.
-*   **Human-in-the-Loop**: All outreach actions require human approval via a simple UI before being queued for execution.
-*   **Core Safety**: Implements working hours enforcement and atomic daily action limits.
-*   **Stop-on-Reply**: A robust, multi-layered mechanism to immediately halt outreach upon receiving a reply.
-*   **Auditing & Dry-Run**: Includes an immutable audit ledger for all actions and a "dry-run" mode for safe testing.
+## Current Milestone
 
-### Post-MVP Phasing:
-*   Features like automated feed commenting, post liking, and multi-campaign management are planned for later phases (e.g., Phase 8), after the core outreach engine is fully stabilized and battle-tested.
+The immediate milestone is to complete and verify Feature 0, then finish Feature 1 as a persistent, independently usable ICP pipeline. Features 2 through 6 begin only after their predecessor release gate passes.
 
-## 3. Navigation Index
+## Supporting Documents
 
-1.  [**Target Audience and ICP**](./01_TARGET_AUDIENCE_AND_ICP.md) - Data ingestion, validation, AI-driven scoring, and campaign staging.
-2.  [**Profile Foundation and Engagement**](./02_PROFILE_FOUNDATION_AND_ENGAGEMENT.md) - Proactive profile optimization.
-3.  [**AI Messaging and Copywriting**](./03_AI_MESSAGING_AND_COPYWRITING.md) - The decoupled AI pipeline for generating and validating outreach copy.
-4.  [**Outreach Strategy and Sequencing**](./04_OUTREACH_STRATEGY_AND_SEQUENCING.md) - The decoupled state machines governing the outreach lifecycle and action execution.
-5.  [**Safety Limits and Operations**](./05_SAFETY_LIMITS_AND_OPERATIONS.md) - The multi-layered safety system and core database schemas.
-6.  [**Tracking, KPIs, and Iteration**](./06_TRACKING_KPIS_AND_ITERATION.md) - Data logging, analytics, and the transactional outbox pattern for integrations.
+- [Planning and delivery model](PLANNING_APPROACH.md)
+- [Architecture decisions](ARCHITECTURE_DECISIONS.md)
+- [Licensing and provenance](LICENSING_AND_PROVENANCE.md)
+- [Business traceability](TRACEABILITY.md)
+- [Feature plans](plans/)
+- [Current implementation](../src/)
+- [Dependency and command baseline](../package.json)
