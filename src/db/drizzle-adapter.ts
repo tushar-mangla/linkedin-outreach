@@ -8,7 +8,9 @@ import { BudgetStorageAdapter } from '../services/budget-storage-adapter.js';
 import { LeaseStorageAdapter } from '../services/lease-storage-adapter.js';
 import * as schema from './schema.js';
 import { assertTenantId, requireTenantId } from './tenant-context.js';
-import { dailyActionBudgets, budgetReservations, prospects, icpEvaluations, importBatches, icpDefinitions, accountLeases, reviewDecisions, auditEvents } from './schema.js';
+import { dailyActionBudgets, budgetReservations, prospects, icpEvaluations, importBatches, icpDefinitions, accountLeases, reviewDecisions, auditEvents, scheduledActions, manualTasks } from './schema.js';
+
+export const TERMINAL_SCHEDULED_ACTION_STATUSES: ReadonlyArray<string> = ['COMPLETED', 'FAILED', 'CANCELLED', 'UNCERTAIN'];
 
 export class DrizzleAdapter implements DBAdapter, BudgetStorageAdapter, LeaseStorageAdapter {
     private db: NodePgDatabase<typeof schema> | PgliteDatabase<typeof schema>;
@@ -139,8 +141,10 @@ export class DrizzleAdapter implements DBAdapter, BudgetStorageAdapter, LeaseSto
     }
 
     // --- Lease Service Methods ---
-    async acquireLease(tenantId: string, accountId: string, workerId: string, ttlSeconds: number): Promise<boolean> {
+    async acquireLease(tenantId: string, accountId: string, workerId: string, ttlSeconds: number, leaseToken?: string): Promise<boolean> {
         assertTenantId(tenantId);
+        const { randomUUID } = await import('node:crypto');
+        const token = leaseToken ?? randomUUID();
         const expiresAt = new Date(Date.now() + ttlSeconds * 1000);
         await this.recoverExpiredLeases(tenantId);
         try {
@@ -148,6 +152,8 @@ export class DrizzleAdapter implements DBAdapter, BudgetStorageAdapter, LeaseSto
                 tenantId,
                 accountId,
                 workerId,
+                leaseToken: token,
+                heartbeatAt: new Date(),
                 expiresAt,
             });
             return true;
@@ -156,13 +162,43 @@ export class DrizzleAdapter implements DBAdapter, BudgetStorageAdapter, LeaseSto
         }
     }
 
-    async releaseLease(tenantId: string, accountId: string, workerId: string): Promise<void> {
+    async acquireLeaseToken(tenantId: string, accountId: string, workerId: string, ttlSeconds: number): Promise<string | null> {
+        const { randomUUID } = await import('node:crypto');
+        const token = randomUUID();
+        const acquired = await this.acquireLease(tenantId, accountId, workerId, ttlSeconds, token);
+        return acquired ? token : null;
+    }
+
+    async heartbeatLease(tenantId: string, accountId: string, workerId: string, token: string, ttlSeconds: number): Promise<boolean> {
         assertTenantId(tenantId);
-        await this.db.delete(accountLeases).where(and(
+        const rows = await this.db.update(accountLeases)
+            .set({ heartbeatAt: new Date(), expiresAt: new Date(Date.now() + ttlSeconds * 1000) })
+            .where(and(
+                eq(accountLeases.tenantId, tenantId),
+                eq(accountLeases.accountId, accountId),
+                eq(accountLeases.workerId, workerId),
+                eq(accountLeases.leaseToken, token),
+                sql`${accountLeases.expiresAt} > now()`,
+            )).returning();
+        return (rows.length ?? 0) > 0;
+    }
+
+    async getActiveLease(tenantId: string, accountId: string) {
+        assertTenantId(tenantId);
+        return this.db.query.accountLeases.findFirst({
+            where: and(eq(accountLeases.tenantId, tenantId), eq(accountLeases.accountId, accountId), sql`${accountLeases.expiresAt} > now()`),
+        }) as Promise<import('../types.js').AccountLease | undefined>;
+    }
+
+    async releaseLease(tenantId: string, accountId: string, workerId: string, leaseToken?: string): Promise<void> {
+        assertTenantId(tenantId);
+        const conditions = [
             eq(accountLeases.tenantId, tenantId),
             eq(accountLeases.accountId, accountId),
-            eq(accountLeases.workerId, workerId)
-        ));
+            eq(accountLeases.workerId, workerId),
+        ];
+        if (leaseToken) conditions.push(eq(accountLeases.leaseToken, leaseToken));
+        await this.db.delete(accountLeases).where(and(...conditions));
     }
 
     async recoverExpiredLeases(tenantId: string): Promise<void> {
@@ -199,5 +235,106 @@ export class DrizzleAdapter implements DBAdapter, BudgetStorageAdapter, LeaseSto
         assertTenantId(event.tenantId);
         const result = await this.db.insert(auditEvents).values(event).returning();
         return result[0] as AuditEvent;
+    }
+
+    async insertScheduledAction(action: Omit<import('../types.js').ScheduledAction, 'id' | 'createdAt' | 'updatedAt' | 'status'>) {
+        assertTenantId(action.tenantId);
+        const result = await this.db.insert(scheduledActions).values({ ...action, actionType: action.actionType }).onConflictDoNothing().returning();
+        if (!result[0]) {
+            const existing = await this.db.query.scheduledActions.findFirst({ where: and(eq(scheduledActions.tenantId, action.tenantId), eq(scheduledActions.idempotencyKey, action.idempotencyKey)) });
+            if (!existing) throw new Error('ACTION_DUPLICATE');
+            return existing as import('../types.js').ScheduledAction;
+        }
+        return result[0] as import('../types.js').ScheduledAction;
+    }
+
+    async claimNextScheduledAction(tenantId: string, accountId: string, workerId: string, claimToken?: string) {
+        assertTenantId(tenantId);
+        const { randomUUID } = await import('node:crypto');
+        const token = claimToken ?? randomUUID();
+        // Atomic tenant-bound claim: single UPDATE over the oldest PENDING row.
+        // PostgreSQL runtime uses FOR UPDATE SKIP LOCKED semantics via row-level
+        // locking; the subselect orders deterministically so concurrent workers
+        // never claim the same row.
+        const claimed = await this.db.execute(sql`
+            UPDATE "scheduled_actions" AS action SET
+                "status" = 'CLAIMED',
+                "claimed_by" = ${workerId},
+                "claimed_at" = now(),
+                "claim_token" = ${token},
+                "updated_at" = now()
+            WHERE "id" = (
+                SELECT "id" FROM "scheduled_actions"
+                WHERE "tenant_id" = ${tenantId}::uuid
+                  AND "account_id" = ${accountId}::uuid
+                  AND "status" = 'PENDING'
+                  AND "scheduled_for" <= now()
+                ORDER BY "scheduled_for" ASC, "created_at" ASC
+                LIMIT 1
+                FOR UPDATE SKIP LOCKED
+            )
+            RETURNING *;
+        `);
+        const rows = (claimed as unknown as { rows?: Array<Record<string, unknown>> }).rows ?? [];
+        if (rows.length === 0) return undefined;
+        const row = rows[0] as Record<string, unknown>;
+        return {
+            id: row.id as string,
+            tenantId: row.tenant_id as string,
+            campaignEnrollmentId: (row.campaign_enrollment_id as string) ?? undefined,
+            prospectId: row.prospect_id as string,
+            accountId: row.account_id as string,
+            actionType: row.action_type as import('../types.js').ScheduledAction['actionType'],
+            payload: (row.payload as Record<string, unknown>) ?? undefined,
+            scheduledFor: new Date(row.scheduled_for as string),
+            status: row.status as import('../types.js').ScheduledAction['status'],
+            idempotencyKey: row.idempotency_key as string,
+            claimToken: (row.claim_token as string) ?? token,
+            revisionId: (row.revision_id as string) ?? undefined,
+            postHash: (row.post_hash as string) ?? undefined,
+            mode: (row.mode as import('../types.js').ScheduledAction['mode']) ?? undefined,
+            outcomeLabel: (row.outcome_label as import('../types.js').ScheduledAction['outcomeLabel']) ?? undefined,
+            errorCode: (row.error_code as string) ?? undefined,
+            claimedBy: (row.claimed_by as string) ?? undefined,
+            claimedAt: row.claimed_at ? new Date(row.claimed_at as string) : undefined,
+            completedAt: row.completed_at ? new Date(row.completed_at as string) : undefined,
+            createdAt: new Date(row.created_at as string),
+            updatedAt: new Date(row.updated_at as string),
+        } as import('../types.js').ScheduledAction;
+    }
+
+    async updateScheduledActionStatus(actionId: string, status: import('../types.js').ScheduledAction['status']) {
+        const tenantId = requireTenantId();
+        const current = await this.db.query.scheduledActions.findFirst({ where: and(eq(scheduledActions.id, actionId), eq(scheduledActions.tenantId, tenantId)) });
+        if (!current) return undefined;
+        if (TERMINAL_SCHEDULED_ACTION_STATUSES.includes(current.status)) {
+            throw new Error('TERMINAL_STATE_IMMUTABLE');
+        }
+        const rows = await this.db.update(scheduledActions).set({ status, updatedAt: new Date(), completedAt: TERMINAL_SCHEDULED_ACTION_STATUSES.includes(status) ? new Date() : current.completedAt }).where(and(eq(scheduledActions.id, actionId), eq(scheduledActions.tenantId, tenantId))).returning();
+        return rows[0] as import('../types.js').ScheduledAction | undefined;
+    }
+
+    async updateScheduledActionResult(tenantId: string, actionId: string, result: { status: import('../types.js').ScheduledAction['status']; outcomeLabel?: import('../types.js').ScheduledAction['outcomeLabel']; errorCode?: string }) {
+        assertTenantId(tenantId);
+        const current = await this.db.query.scheduledActions.findFirst({ where: and(eq(scheduledActions.id, actionId), eq(scheduledActions.tenantId, tenantId)) });
+        if (!current) return undefined;
+        if (TERMINAL_SCHEDULED_ACTION_STATUSES.includes(current.status)) {
+            throw new Error('TERMINAL_STATE_IMMUTABLE');
+        }
+        const rows = await this.db.update(scheduledActions).set({ status: result.status, outcomeLabel: result.outcomeLabel, errorCode: result.errorCode, completedAt: TERMINAL_SCHEDULED_ACTION_STATUSES.includes(result.status) ? new Date() : undefined, updatedAt: new Date() }).where(and(eq(scheduledActions.id, actionId), eq(scheduledActions.tenantId, tenantId))).returning();
+        return rows[0] as import('../types.js').ScheduledAction | undefined;
+    }
+
+    async createManualTask(task: { tenantId: string; scheduledActionId: string; actionType: 'LIKE' | 'COMMENT' }) {
+        assertTenantId(task.tenantId);
+        const result = await this.db.insert(manualTasks).values(task).returning();
+        return { id: result[0].id, status: result[0].status as 'PENDING_CONFIRMATION' };
+    }
+
+    async completeManualTask(tenantId: string, taskId: string, outcome: 'COMPLETED' | 'FAILED' | 'UNCERTAIN', operatorId: string, metadata?: Record<string, unknown>) {
+        assertTenantId(tenantId);
+        const rows = await this.db.update(manualTasks).set({ status: outcome, outcomeLabel: outcome === 'COMPLETED' ? 'manual-confirmed' : 'uncertain', confirmationActor: operatorId, confirmationMetadata: metadata ?? {}, completedAt: new Date() }).where(and(eq(manualTasks.id, taskId), eq(manualTasks.tenantId, tenantId), eq(manualTasks.status, 'PENDING_CONFIRMATION'))).returning();
+        if (!rows[0]) throw new Error('MANUAL_TASK_TERMINAL');
+        return rows[0] as { status: string; outcomeLabel?: 'manual-confirmed' | 'uncertain' };
     }
 }

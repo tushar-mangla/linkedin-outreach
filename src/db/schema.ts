@@ -176,11 +176,142 @@ export const scheduledActions = pgTable('scheduled_actions', {
     payload: json('payload'),
     scheduledFor: timestamp('scheduled_for').notNull(),
     status: varchar('status', { length: 50 }).notNull().default('PENDING'),
-    idempotencyKey: varchar('idempotency_key', { length: 255 }).notNull().unique(),
+  idempotencyKey: varchar('idempotency_key', { length: 255 }).notNull().unique(),
+  revisionId: uuid('revision_id'),
+  postHash: varchar('post_hash', { length: 64 }),
+  mode: varchar('mode', { length: 20 }),
+  outcomeLabel: varchar('outcome_label', { length: 30 }),
+  errorCode: varchar('error_code', { length: 80 }),
+  claimToken: text('claim_token'),
     claimedBy: varchar('claimed_by', { length: 255 }),
     claimedAt: timestamp('claimed_at'),
     completedAt: timestamp('completed_at'),
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
+}, (table) => ({
+  tenantIdempotencyIdx: uniqueIndex('tenant_idempotency_key_idx').on(table.tenantId, table.idempotencyKey),
+}));
+
+// ─── Feature 2: Engagement tables ────────────────────────────────────────────
+
+export const postSourceTypeEnum = pgEnum('post_source_type', ['PLAYWRIGHT', 'FIXTURE', 'MANUAL']);
+export const draftStatusEnum = pgEnum('draft_status', ['PENDING', 'APPROVED', 'EDITED', 'SKIPPED', 'REJECTED']);
+export const engagementActionTypeEnum = pgEnum('engagement_action_type', ['LIKE', 'COMMENT']);
+
+export const engagementPosts = pgTable('engagement_posts', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull(),
+  prospectId: uuid('prospect_id').notNull().references(() => prospects.id),
+  postUrl: text('post_url').notNull(),
+  postText: text('post_text').notNull(),
+  authorName: varchar('author_name', { length: 255 }).notNull().default(''),
+  publishedAt: timestamp('published_at'),
+  sourceType: postSourceTypeEnum('source_type').notNull().default('FIXTURE'),
+  contentHash: varchar('content_hash', { length: 64 }).notNull(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+}, (table) => ({
+  tenantPostUrlIdx: uniqueIndex('tenant_post_url_idx').on(table.tenantId, table.postUrl),
+}));
+
+export const engagementDrafts = pgTable('engagement_drafts', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull(),
+  postId: uuid('post_id').notNull().references(() => engagementPosts.id),
+  prospectId: uuid('prospect_id').notNull().references(() => prospects.id),
+  actionType: engagementActionTypeEnum('action_type').notNull().default('COMMENT'),
+  commentText: text('comment_text').notNull(),
+  editedText: text('edited_text'),
+  status: draftStatusEnum('status').notNull().default('PENDING'),
+  provider: varchar('provider', { length: 50 }).notNull().default('fake'),
+  providerMetadata: json('provider_metadata'),
+  validationReport: json('validation_report'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
 
+export const recommendationRevisions = pgTable('recommendation_revisions', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull(),
+  draftId: uuid('draft_id').notNull().references(() => engagementDrafts.id),
+  revision: integer('revision').notNull(),
+  actionType: engagementActionTypeEnum('action_type').notNull(),
+  postHash: varchar('post_hash', { length: 64 }).notNull(),
+  commentText: text('comment_text').notNull(),
+  evidence: json('evidence').notNull(),
+  validationReport: json('validation_report').notNull(),
+  state: varchar('state', { length: 30 }).notNull().default('PENDING'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+}, (table) => ({
+  tenantDraftRevisionIdx: uniqueIndex('tenant_draft_revision_idx').on(table.tenantId, table.draftId, table.revision),
+}));
+
+export const recommendationApprovals = pgTable('recommendation_approvals', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull(),
+  revisionId: uuid('revision_id').notNull().references(() => recommendationRevisions.id),
+  actionType: engagementActionTypeEnum('action_type').notNull(),
+  operatorId: varchar('operator_id', { length: 255 }).notNull(),
+  state: varchar('state', { length: 30 }).notNull().default('APPROVED'),
+  reason: text('reason'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  expiresAt: timestamp('expires_at'),
+});
+
+export const manualTasks = pgTable('manual_tasks', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull(),
+  scheduledActionId: uuid('scheduled_action_id').references(() => scheduledActions.id),
+  actionType: engagementActionTypeEnum('action_type').notNull(),
+  status: varchar('status', { length: 30 }).notNull().default('PENDING_CONFIRMATION'),
+  outcomeLabel: varchar('outcome_label', { length: 30 }),
+  confirmationActor: varchar('confirmation_actor', { length: 255 }),
+  confirmationMetadata: json('confirmation_metadata'),
+  errorCode: varchar('error_code', { length: 80 }),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  completedAt: timestamp('completed_at'),
+});
+
+export const engagementControls = pgTable('engagement_controls', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull(),
+  accountId: uuid('account_id').notNull(),
+  actionType: engagementActionTypeEnum('action_type').notNull(),
+  enabled: boolean('enabled').notNull().default(false),
+  killSwitchActive: boolean('kill_switch_active').notNull().default(false),
+  cooldownUntil: timestamp('cooldown_until'),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+}, (table) => ({
+  tenantAccountActionIdx: uniqueIndex('tenant_account_action_control_idx').on(table.tenantId, table.accountId, table.actionType),
+}));
+
+export const browserAccounts = pgTable('browser_accounts', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull(),
+  label: varchar('label', { length: 255 }).notNull(),
+  keyVersion: varchar('key_version', { length: 50 }),
+  health: varchar('health', { length: 30 }).notNull().default('PAUSED'),
+  sessionExpiresAt: timestamp('session_expires_at'),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+});
+
+export const executionEvidence = pgTable('execution_evidence', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull(),
+  scheduledActionId: uuid('scheduled_action_id').notNull().references(() => scheduledActions.id),
+  executorMode: varchar('executor_mode', { length: 20 }).notNull(),
+  outcomeLabel: varchar('outcome_label', { length: 30 }).notNull(),
+  evidenceHash: varchar('evidence_hash', { length: 64 }),
+  selectorVersion: varchar('selector_version', { length: 50 }),
+  redactedReference: text('redacted_reference'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+});
+
+export const engagementHistory = pgTable('engagement_history', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull(),
+  prospectId: uuid('prospect_id').notNull().references(() => prospects.id),
+  postId: uuid('post_id').notNull().references(() => engagementPosts.id),
+  actionType: engagementActionTypeEnum('action_type').notNull(),
+  interactedAt: timestamp('interacted_at').defaultNow().notNull(),
+  operatorId: varchar('operator_id', { length: 255 }).notNull(),
+});

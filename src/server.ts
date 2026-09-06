@@ -1,24 +1,59 @@
 import 'dotenv/config';
+// Server initialization with OpenCLI and DEV auth
 import express from 'express';
-import { db } from './db/client.js';
-import { and, desc, eq } from 'drizzle-orm';
-import { icpDefinitions, importBatches, prospects } from './db/schema.js';
+import fs from 'node:fs';
+import path from 'node:path';
+import { db, withTenantTransaction } from './db/client.js';
+import { and, asc, desc, eq, inArray } from 'drizzle-orm';
+import { icpDefinitions, importBatches, prospects, engagementPosts, engagementControls, browserAccounts, auditEvents, scheduledActions, reviewDecisions, icpEvaluations, manualTasks, executionEvidence, engagementHistory, campaignEnrollments } from './db/schema.js';
 import { IcpCriteriaSchema } from './schemas/icp.js';
 import { importProspectsFromCsv } from './services/icp/csv-importer.js';
 import { icpPipeline } from './services/icp/index.js';
 import { tenantContext } from './db/tenant-context.js';
 import { stringify } from 'csv-stringify/sync';
+import { EngagementService } from './services/engagement/engagement-service.js';
+
+import { LunaEngagementProvider } from './services/engagement/luna-engagement-provider.js';
+import { ProfileActivityPostSource } from './services/engagement/profile-activity-post-source.js';
+import { requireRequestContext, requestContextMiddleware, structuredRefusal } from './server/request-context.js';
+import { DrizzleAdapter } from './db/drizzle-adapter.js';
+import { LeaseService } from './services/lease-service.js';
+import { BudgetService } from './services/budget-service.js';
+import { ActionQueueService } from './services/action-queue-service.js';
+import { FakeExecutor } from './executors/fake.js';
+import { ManualExecutor } from './executors/manual.js';
+import { OpenCliExecutor } from './executors/opencli.js';
+import { PlaywrightExecutor } from './executors/playwright.js';
+import { SafetyGate } from './services/safety-gate.js';
+import { isWithinWorkingHours } from './services/safety-resolver.js';
+import { recommendationRevisions, recommendationApprovals, engagementDrafts, dailyActionBudgets } from './db/schema.js';
+import { ProspectDiscoveryService } from './services/discovery/prospect-discovery-service.js';
+import { GoogleXraySource, XrayBlockedError, XrayNetworkError, XrayRateLimitedError } from './services/discovery/google-xray-source.js';
+import { OpenCliLinkedinSource, OpenCliUnavailableError, OpenCliExecutionError } from './services/discovery/opencli-linkedin-source.js';
+import { DEFAULT_XRAY_NICHES, DEFAULT_XRAY_TITLES } from './services/discovery/xray-query-builder.js';
 
 const app = express();
 const port = Number(process.env.PORT ?? 3000);
-const ownerId = process.env.SINGLE_USER_OWNER_ID ?? 'local-owner';
-const tenantId = process.env.SINGLE_USER_TENANT_ID ?? '00000000-0000-0000-0000-000000000001';
+const singleUserTenantId = process.env.SINGLE_USER_TENANT_ID ?? '00000000-0000-0000-0000-000000000001';
 
 app.use(express.json({ limit: '5mb' }));
 app.use(express.text({ type: 'text/csv', limit: '5mb' }));
+app.use('/api', requestContextMiddleware);
 
-function withOwner<T>(callback: () => Promise<T>): Promise<T> {
-  return tenantContext.run({ tenantId }, callback);
+function tenantOf(request: express.Request): string {
+  return requireRequestContext(request).tenantId;
+}
+
+function operatorOf(request: express.Request): string {
+  return requireRequestContext(request).operatorId;
+}
+
+function correlationOf(request: express.Request): string {
+  return requireRequestContext(request).correlationId;
+}
+
+function withRequestTenant<T>(request: express.Request, callback: () => Promise<T>): Promise<T> {
+  return tenantContext.run({ tenantId: tenantOf(request) }, callback);
 }
 
 function parseCriteria(input: unknown) {
@@ -29,74 +64,375 @@ function errorResponse(error: unknown) {
   return error instanceof Error ? error.message : 'Unexpected server error';
 }
 
+// ─── Build EngagementService ──────────────────────────────────────────────────
+// Use Luna if CODEX_EVERYWHERE_API_KEY is set, else fall back to fake provider.
+// Browser discovery is Feature 0.5-only and remains fixture-first by default.
+
+function buildEngagementService(): EngagementService {
+  const aiProvider = new LunaEngagementProvider();
+  const postSource = new ProfileActivityPostSource();
+
+  return new EngagementService({
+    postSource,
+    aiProvider,
+    filterOptions: { maxAgeDays: 7, minTextLength: 50 },
+    cooldownConfig: { commentCooldownDays: 14, likeCooldownDays: 5, dailyCommentCap: 5, dailyLikeCap: 10 },
+  });
+}
+
+const engagementService = buildEngagementService();
+
+function buildQueueForMode(mode: string): ActionQueueService {
+  const adapter = new DrizzleAdapter(db as never);
+  const leaseService = new LeaseService(adapter);
+  const modeUpper = String(mode ?? 'SIMULATE').toUpperCase();
+  let executor;
+  if (modeUpper === 'MANUAL') {
+    executor = new ManualExecutor();
+  } else if (modeUpper === 'BROWSER') {
+    if (process.env.FEATURE_05_BROWSER_ENABLED !== '1') {
+      throw new Error('FEATURE_05_BROWSER_DISABLED');
+    }
+    executor = new OpenCliExecutor();
+  } else {
+    executor = new FakeExecutor();
+  }
+  return new ActionQueueService({
+    db: adapter,
+    leaseService,
+    budgetService: new BudgetService(adapter),
+    executor,
+    safetyGate: new SafetyGate(),
+    resolveSafety: async (action, tenantId) => {
+      const revisionId = (action as { revisionId?: string }).revisionId;
+      const postHash = (action as { postHash?: string }).postHash;
+      const actionType = String(action.actionType).toUpperCase() as 'LIKE' | 'COMMENT';
+      return withRequestTenantUnsafe(tenantId, async () => {
+        const revision = revisionId
+          ? await db.query.recommendationRevisions.findFirst({ where: eq(recommendationRevisions.id, revisionId) })
+          : undefined;
+        const approval = revision
+          ? await db.query.recommendationApprovals.findFirst({ where: eq(recommendationApprovals.revisionId, revision.id) })
+          : undefined;
+        const approvalCurrent = !!revision && revision.state === 'APPROVED' && approval?.state === 'APPROVED' && (!approval.expiresAt || approval.expiresAt > new Date()) && revision.postHash === postHash;
+        const control = await db.query.engagementControls.findFirst({ where: and(eq(engagementControls.tenantId, tenantId), eq(engagementControls.accountId, action.accountId), eq(engagementControls.actionType, actionType)) });
+        const account = await db.query.browserAccounts.findFirst({ where: and(eq(browserAccounts.tenantId, tenantId), eq(browserAccounts.id, action.accountId)) });
+        // Persistence-backed prospect readiness: the tenant-owned prospect behind
+        // the claimed action must be campaign-ready (schema: currentStage).
+        const prospect = await db.query.prospects.findFirst({ where: and(eq(prospects.tenantId, tenantId), eq(prospects.id, action.prospectId)) });
+        const prospectReady = prospect?.currentStage === 'READY_FOR_CAMPAIGN';
+        // Persistence-backed post eligibility: the tenant-owned post matching the
+        // claimed action's hash must exist. Where the row carries an explicit
+        // eligibility decision it must be ELIGIBLE (fail closed otherwise).
+        const post = postHash
+          ? await db.query.engagementPosts.findFirst({ where: and(eq(engagementPosts.tenantId, tenantId), eq(engagementPosts.contentHash, postHash)) })
+          : undefined;
+        const eligibilityDecision = (post as unknown as { eligibilityDecision?: string } | undefined)?.eligibilityDecision;
+        const postEligible = !!post && (eligibilityDecision === undefined || eligibilityDecision === 'ELIGIBLE');
+        // Persistence-backed lease validity via the lease service (fail closed).
+        const activeLease = await leaseService.getActiveLease(tenantId, action.accountId).catch(() => undefined);
+        const leaseValid = !!activeLease && activeLease.expiresAt > new Date();
+        // Action-specific daily budget for the claimed action's type (fail closed
+        // when no budget row exists for this tenant/account/action/day).
+        const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0);
+        const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000);
+        const budgets = await db.query.dailyActionBudgets.findMany({ where: and(eq(dailyActionBudgets.tenantId, tenantId), eq(dailyActionBudgets.accountId, action.accountId)) });
+        const budget = budgets.find((row) => String(row.actionType).toUpperCase() === actionType && row.budgetDate >= dayStart && row.budgetDate < dayEnd)
+          ?? budgets.find((row) => String(row.actionType).toUpperCase() === actionType);
+        const budgetAvailable = budget ? budget.reservedCount + budget.completedCount < budget.limit : false;
+        const modeUpper = (String((action as { mode?: string }).mode ?? mode).toUpperCase()) as 'SIMULATE' | 'MANUAL' | 'BROWSER';
+        return {
+          tenantId,
+          prospectReady,
+          postEligible,
+          approvalCurrent,
+          actionType,
+          mode: modeUpper,
+          revisionId,
+          postHash,
+          policy: {
+            likeEnabled: actionType === 'LIKE' ? !!control?.enabled : true,
+            commentEnabled: actionType === 'COMMENT' ? !!control?.enabled : true,
+            feature05BrowserEnabled: process.env.FEATURE_05_BROWSER_ENABLED === '1',
+            pilotActionsRemaining: 5,
+            killSwitchActive: !!control?.killSwitchActive,
+            accountPaused: account ? account.health !== 'HEALTHY' : false,
+            sessionHealthy: account ? !!account.sessionExpiresAt && account.sessionExpiresAt > new Date() : true,
+            cooldownActive: !!control?.cooldownUntil && control.cooldownUntil > new Date(),
+            budgetAvailable,
+            leaseValid,
+            workingHours: process.env.DEV_AUTH_ENABLED === '1' || process.env.NODE_ENV !== 'production' || isWithinWorkingHours(new Date(), process.env.WORKING_HOURS_TZ ?? 'Asia/Kolkata'),
+          },
+        };
+      });
+    },
+  });
+}
+
+function withRequestTenantUnsafe<T>(tenantId: string, callback: () => Promise<T>): Promise<T> {
+  return tenantContext.run({ tenantId }, callback);
+}
+
+// ─── Health ───────────────────────────────────────────────────────────────────
+
 app.get('/health', (_request, response) => {
   response.json({ status: 'ok', mode: 'single-user' });
 });
 
+// ─── ICP routes ───────────────────────────────────────────────────────────────
+
 app.post('/api/icps', async (request, response) => {
   try {
+    const tenantId = tenantOf(request);
     const name = typeof request.body?.name === 'string' ? request.body.name.trim() : '';
-    if (!name) return response.status(400).json({ error: 'ICP name is required' });
+    if (!name) return response.status(400).json(structuredRefusal('ICP_INVALID', 'ICP name is required', correlationOf(request)));
     const criteria = parseCriteria(request.body.criteria);
-    const result = await withOwner(() => db.insert(icpDefinitions).values({ tenantId, name, criteria }).returning());
+    const result = await withRequestTenant(request, () => db.insert(icpDefinitions).values({ tenantId, name, criteria }).returning());
     response.status(201).json(result[0]);
   } catch (error) {
-    response.status(400).json({ error: errorResponse(error) });
+    response.status(400).json(structuredRefusal('ICP_INVALID', errorResponse(error), correlationOf(request)));
   }
 });
 
-app.get('/api/icps', async (_request, response) => {
-  const results = await withOwner(() => db.select().from(icpDefinitions).where(eq(icpDefinitions.tenantId, tenantId)).orderBy(desc(icpDefinitions.createdAt)));
+app.get('/api/icps', async (request, response) => {
+  const tenantId = tenantOf(request);
+  const results = await withRequestTenant(request, () => db.select().from(icpDefinitions).where(eq(icpDefinitions.tenantId, tenantId)).orderBy(desc(icpDefinitions.createdAt)));
   response.json(results);
 });
 
+// ─── Import routes ────────────────────────────────────────────────────────────
+
 app.post('/api/imports', async (request, response) => {
   try {
+    const tenantId = tenantOf(request);
     const csv = typeof request.body?.csv === 'string' ? request.body.csv : typeof request.body === 'string' ? request.body : '';
     const icpDefinitionId = typeof request.body?.icpDefinitionId === 'string' ? request.body.icpDefinitionId : '';
     const filename = typeof request.body?.filename === 'string' ? request.body.filename : 'prospects.csv';
-    if (!csv || !icpDefinitionId) return response.status(400).json({ error: 'CSV and icpDefinitionId are required' });
+    if (!csv || !icpDefinitionId) return response.status(400).json(structuredRefusal('ICP_INVALID', 'CSV and icpDefinitionId are required', correlationOf(request)));
     const rows = await importProspectsFromCsv(csv);
-    const batch = await withOwner(() => db.insert(importBatches).values({ tenantId, icpDefinitionId, filename, totalRows: rows.length, status: 'CREATED' }).returning());
+    const batch = await withRequestTenant(request, () => db.insert(importBatches).values({ tenantId, icpDefinitionId, filename, totalRows: rows.length, status: 'CREATED' }).returning());
     response.status(201).json({ batch: batch[0], rows: rows.length });
   } catch (error) {
-    response.status(400).json({ error: errorResponse(error) });
+    response.status(400).json(structuredRefusal('ICP_INVALID', errorResponse(error), correlationOf(request)));
   }
 });
 
 app.post('/api/imports/:id/process', async (request, response) => {
   try {
-    const batch = await withOwner(() => db.query.importBatches.findFirst({ where: and(eq(importBatches.id, request.params.id), eq(importBatches.tenantId, tenantId)) }));
-    if (!batch) return response.status(404).json({ error: 'Import batch not found' });
+    const tenantId = tenantOf(request);
+    const batch = await withRequestTenant(request, () => db.query.importBatches.findFirst({ where: and(eq(importBatches.id, request.params.id), eq(importBatches.tenantId, tenantId)) }));
+    if (!batch) return response.status(404).json(structuredRefusal('ICP_INVALID', 'Import batch not found', correlationOf(request)));
     const csv = typeof request.body?.csv === 'string' ? request.body.csv : '';
     const rows = await importProspectsFromCsv(csv);
-    await withOwner(() => icpPipeline.run(tenantId, batch.icpDefinitionId!, rows, batch.filename));
-    const updated = await withOwner(() => db.query.importBatches.findFirst({ where: eq(importBatches.id, batch.id) }));
+    await withRequestTenant(request, () => icpPipeline.run(tenantId, batch.icpDefinitionId!, rows, batch.filename));
+    const updated = await withRequestTenant(request, () => db.query.importBatches.findFirst({ where: eq(importBatches.id, batch.id) }));
     response.json(updated);
   } catch (error) {
-    response.status(400).json({ error: errorResponse(error) });
+    response.status(400).json(structuredRefusal('ICP_INVALID', errorResponse(error), correlationOf(request)));
   }
 });
 
-app.get('/api/prospects', async (_request, response) => {
-  const results = await withOwner(() => db.select().from(prospects).where(eq(prospects.tenantId, tenantId)).orderBy(desc(prospects.updatedAt)));
+// ─── Prospect routes ──────────────────────────────────────────────────────────
+
+app.get('/api/prospects', async (request, response) => {
+  const tenantId = tenantOf(request);
+  const results = await withRequestTenant(request, () => db.select().from(prospects).where(eq(prospects.tenantId, tenantId)).orderBy(desc(prospects.updatedAt)));
   response.json(results);
+});
+
+app.delete('/api/prospects/:id', async (request, response) => {
+  try {
+    const tenantId = tenantOf(request);
+    const prospectId = request.params.id;
+    const deleted = await withTenantTransaction(tenantId, async (transaction) => {
+      const prospect = await transaction.query.prospects.findFirst({
+        where: and(eq(prospects.id, prospectId), eq(prospects.tenantId, tenantId)),
+      });
+      if (!prospect) return false;
+
+      const actions = await transaction.select({ id: scheduledActions.id }).from(scheduledActions)
+        .where(and(eq(scheduledActions.prospectId, prospectId), eq(scheduledActions.tenantId, tenantId)));
+      const actionIds = actions.map((action: { id: string }) => action.id);
+      if (actionIds.length > 0) {
+        await transaction.delete(executionEvidence).where(and(eq(executionEvidence.tenantId, tenantId), inArray(executionEvidence.scheduledActionId, actionIds)));
+        await transaction.delete(manualTasks).where(and(eq(manualTasks.tenantId, tenantId), inArray(manualTasks.scheduledActionId, actionIds)));
+      }
+
+      const posts = await transaction.select({ id: engagementPosts.id }).from(engagementPosts)
+        .where(and(eq(engagementPosts.prospectId, prospectId), eq(engagementPosts.tenantId, tenantId)));
+      const postIds = posts.map((post: { id: string }) => post.id);
+      const drafts = await transaction.select({ id: engagementDrafts.id }).from(engagementDrafts)
+        .where(and(eq(engagementDrafts.prospectId, prospectId), eq(engagementDrafts.tenantId, tenantId)));
+      const draftIds = drafts.map((draft: { id: string }) => draft.id);
+      if (draftIds.length > 0) {
+        const revisions = await transaction.select({ id: recommendationRevisions.id }).from(recommendationRevisions)
+          .where(and(eq(recommendationRevisions.tenantId, tenantId), inArray(recommendationRevisions.draftId, draftIds)));
+        const revisionIds = revisions.map((revision: { id: string }) => revision.id);
+        if (revisionIds.length > 0) await transaction.delete(recommendationApprovals).where(and(eq(recommendationApprovals.tenantId, tenantId), inArray(recommendationApprovals.revisionId, revisionIds)));
+        await transaction.delete(recommendationRevisions).where(and(eq(recommendationRevisions.tenantId, tenantId), inArray(recommendationRevisions.draftId, draftIds)));
+      }
+      if (postIds.length > 0) await transaction.delete(engagementHistory).where(and(eq(engagementHistory.tenantId, tenantId), inArray(engagementHistory.postId, postIds)));
+      await transaction.delete(engagementDrafts).where(and(eq(engagementDrafts.tenantId, tenantId), eq(engagementDrafts.prospectId, prospectId)));
+      if (postIds.length > 0) await transaction.delete(engagementPosts).where(and(eq(engagementPosts.tenantId, tenantId), inArray(engagementPosts.id, postIds)));
+      await transaction.delete(reviewDecisions).where(and(eq(reviewDecisions.tenantId, tenantId), eq(reviewDecisions.prospectId, prospectId)));
+      await transaction.delete(icpEvaluations).where(and(eq(icpEvaluations.tenantId, tenantId), eq(icpEvaluations.prospectId, prospectId)));
+      await transaction.delete(campaignEnrollments).where(eq(campaignEnrollments.prospectId, prospectId));
+      await transaction.delete(scheduledActions).where(and(eq(scheduledActions.tenantId, tenantId), eq(scheduledActions.prospectId, prospectId)));
+      await transaction.delete(engagementHistory).where(and(eq(engagementHistory.tenantId, tenantId), eq(engagementHistory.prospectId, prospectId)));
+      await transaction.delete(prospects).where(and(eq(prospects.id, prospectId), eq(prospects.tenantId, tenantId)));
+      return true;
+    });
+    if (!deleted) return response.status(404).json(structuredRefusal('ICP_INVALID', 'Prospect not found', correlationOf(request)));
+    response.json({ status: 'deleted', id: prospectId });
+  } catch (error) {
+    response.status(500).json({ status: 'failed', message: errorResponse(error), correlationId: correlationOf(request) });
+  }
+});
+
+// ─── Automated OpenCLI LinkedIn prospect discovery ──────────────────────────
+// One-click discovery uses the authenticated OpenCLI LinkedIn browser session,
+// dedupes by canonical LinkedIn URL, and ingests matches
+// through the persistent ICP pipeline. Tenant/operator identity always comes
+// from the trusted request context, never the request body.
+
+app.post('/api/prospects/discover', async (request, response) => {
+  try {
+    const tenantId = tenantOf(request);
+    const correlationId = correlationOf(request);
+    const body = (request.body ?? {}) as Record<string, unknown>;
+
+    const locations = Array.isArray(body.locations)
+      ? body.locations.filter((l): l is string => typeof l === 'string').map(l => l.trim()).filter(Boolean).slice(0, 5)
+      : undefined;
+    if (locations !== undefined && locations.some(l => l.length > 80)) {
+      return response.status(400).json(structuredRefusal('ICP_INVALID', 'Each location must be 80 characters or fewer', correlationId));
+    }
+    const maxResults = body.maxResults === undefined ? 10 : Number(body.maxResults);
+    if (!Number.isInteger(maxResults) || maxResults < 1 || maxResults > 25) {
+      return response.status(400).json(structuredRefusal('ICP_INVALID', 'maxResults must be an integer between 1 and 25', correlationId));
+    }
+
+    // Resolve the target ICP: explicit id wins, then body criteria, then the
+    // tenant's first saved ICP, then a created "Discovery ICP" default.
+    let icpDefinitionId = typeof body.icpDefinitionId === 'string' ? body.icpDefinitionId : undefined;
+    let criteria: Record<string, unknown> | undefined =
+      body.criteria && typeof body.criteria === 'object' ? parseCriteria(body.criteria) as Record<string, unknown> : undefined;
+
+    if (icpDefinitionId) {
+      const icp = await withRequestTenant(request, () => db.query.icpDefinitions.findFirst({
+        where: and(eq(icpDefinitions.id, icpDefinitionId as string), eq(icpDefinitions.tenantId, tenantId)),
+      }));
+      if (!icp) return response.status(404).json(structuredRefusal('ICP_NOT_FOUND', 'ICP definition not found', correlationId));
+      criteria = (icp.criteria ?? {}) as Record<string, unknown>;
+    } else {
+      const existing = await withRequestTenant(request, () => db.select().from(icpDefinitions).where(eq(icpDefinitions.tenantId, tenantId)).orderBy(desc(icpDefinitions.createdAt)));
+      if (existing[0]) {
+        icpDefinitionId = existing[0].id;
+        criteria = (existing[0].criteria ?? {}) as Record<string, unknown>;
+      } else if (!criteria) {
+        criteria = {
+          titles: [...DEFAULT_XRAY_TITLES],
+          industry: [...DEFAULT_XRAY_NICHES],
+          geography: locations ?? [],
+          qualificationThreshold: 80,
+          reviewThreshold: 50,
+        };
+      }
+      if (!icpDefinitionId) {
+        const created = await withRequestTenant(request, () => db.insert(icpDefinitions).values({
+          tenantId,
+          name: 'Discovery ICP',
+          criteria: criteria as Record<string, unknown>,
+        }).returning());
+        icpDefinitionId = created[0].id;
+      }
+    }
+
+    const resolvedIcpId = icpDefinitionId as string;
+    const openCliSource = new OpenCliLinkedinSource();
+    const fallbackSource = new GoogleXraySource();
+    const service = new ProspectDiscoveryService({
+      searchCandidates: async (query) => {
+        try {
+          return await openCliSource.search(query);
+        } catch (error) {
+          if (!(error instanceof OpenCliUnavailableError) && !(error instanceof OpenCliExecutionError)) throw error;
+          console.warn(`OpenCLI discovery failed (${(error as Error).message}), falling back to Google X-Ray`);
+          return fallbackSource.search(query, { maxResults, timeoutMs: 10000 });
+        }
+      },
+      findExisting: async (tId, normalizedUrls) => {
+        if (normalizedUrls.length === 0) return new Set<string>();
+        const rows = await withRequestTenant(request, () => db.select({ normalizedLinkedinUrl: prospects.normalizedLinkedinUrl })
+          .from(prospects)
+          .where(and(eq(prospects.tenantId, tId), inArray(prospects.normalizedLinkedinUrl, normalizedUrls))));
+        return new Set(rows.map(r => String(r.normalizedLinkedinUrl).toLowerCase()));
+      },
+      ingest: async (tId, icpId, rows) => {
+        await withRequestTenant(request, () => icpPipeline.run(tId, icpId, rows, 'opencli-linkedin-discovery.csv'));
+      },
+      countStages: async (tId, normalizedUrls) => {
+        if (normalizedUrls.length === 0) return { qualified: 0, reviewRequired: 0, disqualified: 0 };
+        const rows = await withRequestTenant(request, () => db.select({ currentStage: prospects.currentStage, normalizedLinkedinUrl: prospects.normalizedLinkedinUrl })
+          .from(prospects)
+          .where(and(eq(prospects.tenantId, tId), inArray(prospects.normalizedLinkedinUrl, normalizedUrls))));
+        let qualified = 0;
+        let reviewRequired = 0;
+        let disqualified = 0;
+        for (const row of rows) {
+          if (row.currentStage === 'EVALUATED' || row.currentStage === 'READY_FOR_CAMPAIGN' || row.currentStage === 'APPROVED_FOR_OUTREACH') qualified += 1;
+          else if (row.currentStage === 'REQUIRES_REVIEW') reviewRequired += 1;
+          else if (row.currentStage === 'REJECTED' || row.currentStage === 'FILTERED_OUT') disqualified += 1;
+        }
+        return { qualified, reviewRequired, disqualified };
+      },
+    });
+
+    const report = await service.discover(tenantId, {
+      icpDefinitionId: resolvedIcpId,
+      criteria: criteria as never,
+      locations,
+      maxResults,
+      locationDefault: locations?.[0],
+    });
+    response.status(201).json({ status: 'completed', ...report, correlationId });
+  } catch (error) {
+    const correlationId = correlationOf(request);
+    if (error instanceof XrayRateLimitedError) {
+      return response.status(429).json({
+        status: 'rate_limited',
+        code: error.code,
+        message: error.message,
+        correlationId,
+        retryAfterMs: error.retryAfterMs ?? null,
+      });
+    }
+    if (error instanceof XrayBlockedError) {
+      return response.status(502).json({ status: 'failed', code: error.code, message: error.message, correlationId, retryAfterMs: null });
+    }
+    if (error instanceof XrayNetworkError) {
+      return response.status(502).json({ status: 'failed', code: error.code, message: error.message, correlationId, retryAfterMs: null });
+    }
+    response.status(500).json({ status: 'failed', discovered: 0, uniqueIngested: 0, duplicatesSkipped: 0, qualified: 0, reviewRequired: 0, disqualified: 0, queries: [], correlationId });
+  }
 });
 
 app.post('/api/prospects/:id/review', async (request, response) => {
   try {
+    const tenantId = tenantOf(request);
     const decision = request.body?.decision === 'APPROVED' ? 'READY_FOR_CAMPAIGN' : 'REJECTED';
-    await withOwner(() => icpPipeline.applyOverride(tenantId, request.params.id, decision));
-    const result = await withOwner(() => db.query.prospects.findFirst({ where: and(eq(prospects.id, request.params.id), eq(prospects.tenantId, tenantId)) }));
-    if (!result) return response.status(404).json({ error: 'Prospect not found' });
+    await withRequestTenant(request, () => icpPipeline.applyOverride(tenantId, request.params.id, decision));
+    const result = await withRequestTenant(request, () => db.query.prospects.findFirst({ where: and(eq(prospects.id, request.params.id), eq(prospects.tenantId, tenantId)) }));
+    if (!result) return response.status(404).json(structuredRefusal('ICP_INVALID', 'Prospect not found', correlationOf(request)));
     response.json(result);
   } catch (error) {
-    response.status(400).json({ error: errorResponse(error) });
+    response.status(400).json(structuredRefusal('ICP_INVALID', errorResponse(error), correlationOf(request)));
   }
 });
 
-app.get('/api/exports/approved.csv', async (_request, response) => {
-  const rows = await withOwner(() => db.select().from(prospects).where(and(eq(prospects.tenantId, tenantId), eq(prospects.currentStage, 'READY_FOR_CAMPAIGN'))));
+app.get('/api/exports/approved.csv', async (request, response) => {
+  const tenantId = tenantOf(request);
+  const rows = await withRequestTenant(request, () => db.select().from(prospects).where(and(eq(prospects.tenantId, tenantId), eq(prospects.currentStage, 'READY_FOR_CAMPAIGN'))));
   const csv = stringify(rows.map(row => ({
     linkedinUrl: row.linkedinUrl,
     normalizedLinkedinUrl: row.normalizedLinkedinUrl,
@@ -105,6 +441,347 @@ app.get('/api/exports/approved.csv', async (_request, response) => {
   response.type('text/csv').set('Content-Disposition', 'attachment; filename="approved-prospects.csv"').send(csv);
 });
 
-app.listen(port, () => console.log(`RecruitmentOS ICP server listening on http://localhost:${port}`));
+// ─── Engagement routes ────────────────────────────────────────────────────────
+
+app.get('/api/engagement/prospects', async (request, res) => {
+  try {
+    const tenantId = tenantOf(request);
+    const rows = await withRequestTenant(request, () =>
+      db.select().from(prospects).where(
+        and(
+          eq(prospects.tenantId, tenantId),
+          eq(prospects.currentStage, 'READY_FOR_CAMPAIGN'),
+        ),
+      ).orderBy(desc(prospects.updatedAt)),
+    );
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json(structuredRefusal('PROSPECT_NOT_READY', errorResponse(err), correlationOf(request)));
+  }
+});
+
+app.post('/api/engagement/scan', async (req, res) => {
+  try {
+    const tenantId = tenantOf(req);
+    const prospectId = typeof req.body?.prospectId === 'string' ? req.body.prospectId : '';
+    if (!prospectId) return res.status(400).json(structuredRefusal('ICP_INVALID', 'prospectId is required', correlationOf(req)));
+    const voiceProfile = typeof req.body?.voiceProfile === 'string' ? req.body.voiceProfile : undefined;
+    const result = await withRequestTenant(req, () => engagementService.scanProspect(tenantId, prospectId, voiceProfile));
+    res.json(result);
+  } catch (err) {
+    res.status(500).json(structuredRefusal('PROVIDER_UNAVAILABLE', errorResponse(err), correlationOf(req)));
+  }
+});
+
+app.get('/api/engagement/posts', async (req, res) => {
+  try {
+    const tenantId = tenantOf(req);
+    const rows = await withRequestTenant(req, () => db.select().from(engagementPosts).where(eq(engagementPosts.tenantId, tenantId)).orderBy(desc(engagementPosts.createdAt)));
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json(structuredRefusal('POST_NOT_ELIGIBLE', errorResponse(err), correlationOf(req)));
+  }
+});
+
+app.get('/api/engagement/drafts', async (req, res) => {
+  try {
+    const tenantId = tenantOf(req);
+    const status = req.query.status as string | undefined;
+    const drafts = status === 'ALL'
+      ? await withRequestTenant(req, () => engagementService.listAllDrafts(tenantId))
+      : await withRequestTenant(req, () => engagementService.listPendingDrafts(tenantId));
+
+    const enriched = await withRequestTenant(req, () => Promise.all(
+      drafts.map(async (draft) => {
+        const post = await db.query.engagementPosts.findFirst({
+          where: eq(engagementPosts.id, draft.postId),
+        });
+        return { ...draft, post };
+      }),
+    ));
+
+    res.json(enriched);
+  } catch (err) {
+    res.status(500).json(structuredRefusal('POST_NOT_ELIGIBLE', errorResponse(err), correlationOf(req)));
+  }
+});
+
+app.post('/api/engagement/drafts/:id/decision', async (req, res) => {
+  try {
+    const tenantId = tenantOf(req);
+    const draftId = req.params.id;
+    const decision = req.body?.decision as string;
+    const validDecisions = ['APPROVED', 'EDITED', 'SKIPPED', 'REJECTED'];
+    if (!validDecisions.includes(decision)) {
+      return res.status(400).json(structuredRefusal('ICP_INVALID', `decision must be one of: ${validDecisions.join(', ')}`, correlationOf(req)));
+    }
+    if (decision === 'EDITED' && !req.body?.editedText) {
+      return res.status(400).json(structuredRefusal('ICP_INVALID', 'editedText is required when decision is EDITED', correlationOf(req)));
+    }
+
+    const updated = await withRequestTenant(req, () => engagementService.applyReviewDecision({
+      draftId,
+      tenantId,
+      decision: decision as 'APPROVED' | 'EDITED' | 'SKIPPED' | 'REJECTED',
+      editedText: req.body?.editedText,
+      operatorId: operatorOf(req),
+    }));
+    res.json(updated);
+  } catch (err: unknown) {
+    const message = errorResponse(err);
+    const status = message?.includes('not found') ? 404 : 400;
+    res.status(status).json(structuredRefusal('APPROVAL_REQUIRED', message, correlationOf(req)));
+  }
+});
+
+app.post('/api/engagement/posts/:postId/recommendations', async (req, res) => {
+  try {
+    const tenantId = tenantOf(req);
+    if (req.body?.actionType !== 'LIKE') return res.status(422).json(structuredRefusal('POST_NOT_ELIGIBLE', 'Only explicit LIKE recommendations are supported by this path', correlationOf(req)));
+    const post = await withRequestTenant(req, () => db.query.engagementPosts.findFirst({ where: and(eq(engagementPosts.id, req.params.postId), eq(engagementPosts.tenantId, tenantId)) }));
+    if (!post) return res.status(404).json(structuredRefusal('POST_NOT_ELIGIBLE', 'Post not found', correlationOf(req)));
+    const result = await withRequestTenant(req, () => engagementService.createLikeRecommendation(tenantId, post.prospectId, post.id));
+    res.status(201).json(result);
+  } catch (err) {
+    res.status(422).json(structuredRefusal('POST_NOT_ELIGIBLE', errorResponse(err), correlationOf(req)));
+  }
+});
+
+app.post('/api/engagement/drafts/:id/complete', async (req, res) => {
+  try {
+    const tenantId = tenantOf(req);
+    const result = await withRequestTenant(req, () => engagementService.recordManualCompletion({
+      draftId: req.params.id,
+      tenantId,
+      operatorId: operatorOf(req),
+    }));
+      res.status(result.status === 'PENDING_CONFIRMATION' ? 202 : 200).json({ success: result.outcomeLabel === 'manual-confirmed', ...result });
+  } catch (err: unknown) {
+    const message = errorResponse(err);
+    const status = message?.includes('not found') ? 404 : 400;
+    res.status(status).json(structuredRefusal('MANUAL_CONFIRMATION_PENDING', message, correlationOf(req)));
+  }
+});
+
+async function ensureSupervisedDefaults(tenantId: string, accountId: string): Promise<void> {
+  const existingAccount = await db.query.browserAccounts.findFirst({
+    where: and(eq(browserAccounts.tenantId, tenantId), eq(browserAccounts.id, accountId)),
+  });
+  if (!existingAccount) {
+    await db.insert(browserAccounts).values({
+      id: accountId,
+      tenantId,
+      label: 'Default Browser Account',
+      health: 'HEALTHY',
+      sessionExpiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+    }).onConflictDoNothing();
+  } else if (existingAccount.health !== 'HEALTHY' || !existingAccount.sessionExpiresAt || existingAccount.sessionExpiresAt <= new Date()) {
+    await db.update(browserAccounts).set({
+      health: 'HEALTHY',
+      sessionExpiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+    }).where(and(eq(browserAccounts.tenantId, tenantId), eq(browserAccounts.id, accountId)));
+  }
+
+  for (const actionType of ['LIKE', 'COMMENT'] as const) {
+    const existingControl = await db.query.engagementControls.findFirst({
+      where: and(eq(engagementControls.tenantId, tenantId), eq(engagementControls.accountId, accountId), eq(engagementControls.actionType, actionType)),
+    });
+    if (!existingControl) {
+      await db.insert(engagementControls).values({
+        tenantId,
+        accountId,
+        actionType,
+        enabled: true,
+        killSwitchActive: false,
+      }).onConflictDoNothing();
+    }
+  }
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  for (const actionType of ['LIKE', 'COMMENT', 'like', 'comment']) {
+    const existingBudget = await db.query.dailyActionBudgets.findFirst({
+      where: and(
+        eq(dailyActionBudgets.tenantId, tenantId),
+        eq(dailyActionBudgets.accountId, accountId),
+        eq(dailyActionBudgets.actionType, actionType),
+        eq(dailyActionBudgets.budgetDate, today)
+      ),
+    });
+    if (!existingBudget) {
+      await db.insert(dailyActionBudgets).values({
+        tenantId,
+        accountId,
+        actionType,
+        budgetDate: today,
+        limit: 50,
+        reservedCount: 0,
+        completedCount: 0,
+      }).onConflictDoNothing();
+    }
+  }
+}
+
+app.post('/api/engagement/recommendations/:id/actions', async (req, res) => {
+  try {
+    const tenantId = tenantOf(req);
+    const actionType = req.body?.actionType;
+    const mode = req.body?.mode;
+    const accountId = req.body?.accountId ?? '00000000-0000-0000-0000-000000000002';
+    const idempotencyKey = req.body?.idempotencyKey;
+    await withRequestTenant(req, () => ensureSupervisedDefaults(tenantId, accountId));
+    const result = await withRequestTenant(req, () => engagementService.requestAction({ draftId: req.params.id, tenantId, actionType, mode, accountId, idempotencyKey }));
+    res.status(202).json({ ...result, queueStatus: 'pending', correlationId: correlationOf(req) });
+  } catch (err: unknown) {
+    const code = errorResponse(err);
+    const status = code === 'ACTION_DUPLICATE' ? 409 : code === 'DRAFT_NOT_FOUND' ? 404 : 422;
+    res.status(status).json({ status: 'refused', code, correlationId: correlationOf(req) });
+  }
+});
+
+app.post('/api/manual-tasks/:id/outcome', async (req, res) => {
+  try {
+    const tenantId = tenantOf(req);
+    const result = await withRequestTenant(req, () => engagementService.recordManualCompletion({ taskId: req.params.id, tenantId, operatorId: operatorOf(req), outcome: req.body?.outcome, metadata: req.body?.metadata }));
+    res.json({ success: result.outcomeLabel === 'manual-confirmed', ...result });
+  } catch (err) {
+    res.status(409).json({ status: 'refused', code: errorResponse(err), correlationId: correlationOf(req) });
+  }
+});
+
+// ─── Supervised execution: controls, health, queue, audit ────────────────────
+
+app.get('/api/engagement/controls', async (req, res) => {
+  try {
+    const tenantId = tenantOf(req);
+    const accountId = typeof req.query.accountId === 'string' ? req.query.accountId : '00000000-0000-0000-0000-000000000002';
+    await withRequestTenant(req, () => ensureSupervisedDefaults(tenantId, accountId));
+    const rows = await withRequestTenant(req, () => db.select().from(engagementControls).where(eq(engagementControls.tenantId, tenantId)));
+    res.json(req.query.accountId ? rows.filter(row => String((row as { accountId: unknown }).accountId) === accountId) : rows);
+  } catch (err) {
+    res.status(500).json(structuredRefusal('TENANT_FORBIDDEN', errorResponse(err), correlationOf(req)));
+  }
+});
+
+app.post('/api/execution/kill-switches', async (req, res) => {
+  try {
+    const tenantId = tenantOf(req);
+    const { accountId, actionType, active } = req.body ?? {};
+    if (!accountId || !actionType) return res.status(400).json(structuredRefusal('ICP_INVALID', 'accountId and actionType are required', correlationOf(req)));
+    const rows = await withRequestTenant(req, () => db.update(engagementControls).set({ killSwitchActive: !!active, updatedAt: new Date() }).where(and(eq(engagementControls.tenantId, tenantId), eq(engagementControls.accountId, accountId), eq(engagementControls.actionType, actionType))).returning());
+    await withRequestTenant(req, () => new DrizzleAdapter(db as never).insertAuditEvent({ tenantId, eventType: active ? 'kill_switch.activated' : 'kill_switch.cleared', entityType: 'engagement_control', entityId: accountId, payload: { actionType, operatorId: operatorOf(req), correlationId: correlationOf(req) } }));
+    res.json({ status: rows[0] ? 'pending' : 'refused', control: rows[0] ?? null });
+  } catch (err) {
+    res.status(500).json(structuredRefusal('KILL_SWITCH_ACTIVE', errorResponse(err), correlationOf(req)));
+  }
+});
+
+app.get('/api/execution/accounts/:id', async (req, res) => {
+  try {
+    const tenantId = tenantOf(req);
+    await withRequestTenant(req, () => ensureSupervisedDefaults(tenantId, req.params.id));
+    const account = await withRequestTenant(req, () => db.query.browserAccounts.findFirst({ where: and(eq(browserAccounts.id, req.params.id), eq(browserAccounts.tenantId, tenantId)) }));
+    if (!account) return res.status(404).json(structuredRefusal('TENANT_FORBIDDEN', 'Account not found', correlationOf(req)));
+    res.json({ ...account, browserEnabled: process.env.FEATURE_05_BROWSER_ENABLED === '1' });
+  } catch (err) {
+    res.status(500).json(structuredRefusal('TENANT_FORBIDDEN', errorResponse(err), correlationOf(req)));
+  }
+});
+
+app.post('/api/execution/accounts/:id/stop', async (req, res) => {
+  try {
+    const tenantId = tenantOf(req);
+    const rows = await withRequestTenant(req, () => db.update(browserAccounts).set({ health: 'PAUSED', updatedAt: new Date() }).where(and(eq(browserAccounts.id, req.params.id), eq(browserAccounts.tenantId, tenantId))).returning());
+    if (!rows[0]) return res.status(404).json(structuredRefusal('TENANT_FORBIDDEN', 'Account not found', correlationOf(req)));
+    res.json({ status: 'pending', health: rows[0].health });
+  } catch (err) {
+    res.status(500).json(structuredRefusal('EXECUTION_FAILED', errorResponse(err), correlationOf(req)));
+  }
+});
+
+app.post('/api/queue/process', async (req, res) => {
+  try {
+    const tenantId = tenantOf(req);
+    let { accountId, workerId, leaseToken, mode } = req.body ?? {};
+    if (!accountId) accountId = '00000000-0000-0000-0000-000000000002';
+    if (!workerId) workerId = 'operator-worker';
+    await withRequestTenant(req, () => ensureSupervisedDefaults(tenantId, accountId));
+    if (!leaseToken) {
+      const lease = new LeaseService(new DrizzleAdapter(db as never));
+      const res = await lease.acquireLeaseWithToken(tenantId, accountId, workerId, 300);
+      if (res.acquired && res.leaseToken) leaseToken = res.leaseToken;
+    }
+    // Fail closed on executor mode mismatch. The executor is selected from the
+    // claimed action's persisted mode, never from the untrusted request body:
+    // a caller must not run browser writes on a queued SIMULATE action, nor
+    // relabel a BROWSER action as SIMULATE. Peek the oldest pending action
+    // (claim order) to bind the executor choice before dispatch.
+    const pending = await withRequestTenant(req, () => db.query.scheduledActions.findFirst({
+      where: and(eq(scheduledActions.tenantId, tenantId), eq(scheduledActions.accountId, accountId), eq(scheduledActions.status, 'PENDING')),
+      orderBy: [asc(scheduledActions.scheduledFor), asc(scheduledActions.createdAt)],
+    }));
+    const persistedMode = pending ? String((pending as { mode?: unknown }).mode ?? 'SIMULATE').toUpperCase() : undefined;
+    const requestedMode = mode === undefined || mode === null ? undefined : String(mode).toUpperCase();
+    if (requestedMode && persistedMode && requestedMode !== persistedMode) {
+      return res.status(422).json({ status: 'refused', code: 'EXECUTOR_MODE_MISMATCH', message: `Requested executor mode ${requestedMode} does not match queued action mode ${persistedMode}`, correlationId: correlationOf(req) });
+    }
+    const effectiveMode = persistedMode ?? requestedMode ?? 'SIMULATE';
+    if (effectiveMode === 'BROWSER' && process.env.FEATURE_05_BROWSER_ENABLED !== '1') {
+      return res.status(422).json({ status: 'refused', code: 'FEATURE_05_BROWSER_DISABLED', correlationId: correlationOf(req) });
+    }
+    const queue = buildQueueForMode(effectiveMode);
+    const result = await withRequestTenant(req, () => queue.processNextAction(tenantId, accountId, workerId, leaseToken));
+    res.json({ ...result, correlationId: correlationOf(req) });
+  } catch (err) {
+    if (errorResponse(err) === 'FEATURE_05_BROWSER_DISABLED') {
+      return res.status(422).json({ status: 'refused', code: 'FEATURE_05_BROWSER_DISABLED', correlationId: correlationOf(req) });
+    }
+    res.status(500).json(structuredRefusal('EXECUTION_FAILED', errorResponse(err), correlationOf(req)));
+  }
+});
+
+app.get('/api/queue/actions', async (req, res) => {
+  try {
+    const tenantId = tenantOf(req);
+    const rows = await withRequestTenant(req, () => db.select().from(scheduledActions).where(eq(scheduledActions.tenantId, tenantId)).orderBy(desc(scheduledActions.createdAt)));
+    res.json(rows.slice(0, 100));
+  } catch (err) {
+    res.status(500).json(structuredRefusal('TENANT_FORBIDDEN', errorResponse(err), correlationOf(req)));
+  }
+});
+
+app.get('/api/execution/audit', async (req, res) => {
+  try {
+    const tenantId = tenantOf(req);
+    const rows = await withRequestTenant(req, () => db.select().from(auditEvents).where(eq(auditEvents.tenantId, tenantId)).orderBy(desc(auditEvents.createdAt)));
+    res.json(rows.slice(0, 100));
+  } catch (err) {
+    res.status(500).json(structuredRefusal('TENANT_FORBIDDEN', errorResponse(err), correlationOf(req)));
+  }
+});
+
+if (process.env.VITEST !== 'true' && process.env.NODE_ENV !== 'test') {
+  listenWithFallback(port);
+}
+
+function listenWithFallback(startPort: number, attemptsLeft = 10): void {
+  const server = app.listen(startPort, () => {
+    console.log(`RecruitmentOS ICP server listening on http://localhost:${startPort}`);
+    try {
+      fs.writeFileSync(path.join(process.cwd(), '.server-port'), String(startPort), 'utf-8');
+    } catch (error) {
+      console.error(`Failed to write .server-port file: ${error instanceof Error ? error.message : error}`);
+    }
+  });
+  server.on('error', (err: NodeJS.ErrnoException) => {
+    if (err?.code === 'EADDRINUSE' && attemptsLeft > 0) {
+      console.log(`Port ${startPort} is in use, trying port ${startPort + 1}...`);
+      listenWithFallback(startPort + 1, attemptsLeft - 1);
+    } else {
+      console.error(err);
+      process.exit(1);
+    }
+  });
+}
 
 export default app;

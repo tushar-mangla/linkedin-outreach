@@ -33,6 +33,8 @@ export interface ReplyCheckInput {
 
 export interface ActionResult {
   success: boolean;
+  outcomeLabel?: 'pending' | 'simulated' | 'manual-confirmed' | 'browser-executed' | 'verified' | 'uncertain' | 'refused' | 'failed';
+  errorCode?: string;
   timestamp: string;
   audit: {
     eventId: string;

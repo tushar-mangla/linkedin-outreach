@@ -22,6 +22,27 @@
       "when": 1788443215969,
       "tag": "0002_zippy_may_parker",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1788524358111,
+      "tag": "0003_loud_lilandra",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1788524358112,
+      "tag": "0004_supervised_execution",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1788600000000,
+      "tag": "0005_supervised_hardening",
+      "breakpoints": true
     }
   ]
 }

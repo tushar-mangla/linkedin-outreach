@@ -15,5 +15,7 @@ pnpm-debug.log*
 /api/dist
 /web/dist
 /coverage
+.linkedin-profile/
+/.server-port
 
 /tests

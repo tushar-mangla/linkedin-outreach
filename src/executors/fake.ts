@@ -27,6 +27,7 @@ export class FakeExecutor implements LinkedInExecutor {
     });
     return {
       success: true,
+      outcomeLabel: 'simulated',
       timestamp: new Date().toISOString(),
       audit: {
         eventId,
@@ -46,6 +47,10 @@ export class FakeExecutor implements LinkedInExecutor {
   async likePost(input: LikeInput): Promise<ActionResult> {
     console.log(`[FakeExecutor] Liking post: ${input.postUrl}`);
     const post = fakeDb.posts.get(input.postUrl) ?? { comments: [] };
+    if (post.liked) {
+      const { eventId, payloadHash } = await auditLogger.record({ action: 'likePost.duplicate', actor: 'FakeExecutor', details: input });
+      return { success: false, errorCode: 'ACTION_DUPLICATE', timestamp: new Date().toISOString(), audit: { eventId, payloadHash } };
+    }
     post.liked = true;
     fakeDb.posts.set(input.postUrl, post);
     return this.createSuccessResult('likePost', input);

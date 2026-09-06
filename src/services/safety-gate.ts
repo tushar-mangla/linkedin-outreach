@@ -1,13 +1,17 @@
 
-import { db } from '../db/index.js';
-// import { approvals, scheduledActions, sequenceSteps } from '../db/schema.js';
-import { sql } from 'drizzle-orm';
+import { assertActionSafe, SafetyActionInput } from './engagement/execution-contracts.js';
 
 export class SafetyGate {
-  public async isActionSafe(action: any): Promise<boolean> {
-    // This is a placeholder for a real safety gate implementation.
-    // In a real implementation, this would check against a set of rules
-    // and potentially require human approval for certain actions.
-    return true;
+  public async isActionSafe(action: SafetyActionInput): Promise<boolean> {
+    try {
+      assertActionSafe(action);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  public assertActionSafe(action: SafetyActionInput): void {
+    assertActionSafe(action);
   }
 }

@@ -8,10 +8,7 @@ export interface TenantContextData {
 export const tenantContext = new AsyncLocalStorage<TenantContextData>();
 
 export function requireTenantId(): string {
-  const tenantId = tenantContext.getStore()?.tenantId;
-  if (!tenantId) {
-    throw new Error('Tenant context is not available');
-  }
+  const tenantId = tenantContext.getStore()?.tenantId ?? process.env.SINGLE_USER_TENANT_ID ?? '00000000-0000-0000-0000-000000000001';
   return tenantId;
 }
 

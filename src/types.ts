@@ -176,6 +176,12 @@ export type ScheduledAction = {
   scheduledFor: Date;
   status: 'PENDING' | 'CLAIMED' | 'COMPLETED' | 'FAILED' | 'UNCERTAIN';
   idempotencyKey: string;
+  claimToken?: string | null;
+  revisionId?: string;
+  postHash?: string;
+  mode?: 'SIMULATE' | 'MANUAL' | 'BROWSER';
+  outcomeLabel?: 'pending' | 'simulated' | 'manual-confirmed' | 'browser-executed' | 'verified' | 'uncertain' | 'refused' | 'failed';
+  errorCode?: string;
   claimedBy?: string;
   claimedAt?: Date;
   completedAt?: Date;
@@ -183,3 +189,67 @@ export type ScheduledAction = {
   updatedAt: Date;
 };
 
+// ─── Feature 2: Engagement ───────────────────────────────────────────────────
+
+export type PostSourceType = 'PLAYWRIGHT' | 'FIXTURE' | 'MANUAL';
+
+export type LinkedInPost = {
+  id: string;
+  tenantId: string;
+  prospectId: string;
+  postUrl: string;
+  postText: string;
+  authorName: string;
+  publishedAt?: Date;
+  sourceType: PostSourceType;
+  contentHash: string;
+  createdAt: Date;
+};
+
+export type DraftStatus = 'PENDING' | 'APPROVED' | 'EDITED' | 'SKIPPED' | 'REJECTED';
+export type EngagementActionType = 'LIKE' | 'COMMENT';
+
+export type CommentDraft = {
+  commentText: string;
+  groundingEvidence: string;
+  providerMeta?: Record<string, unknown>;
+};
+
+export type EngagementDraft = {
+  id: string;
+  tenantId: string;
+  postId: string;
+  prospectId: string;
+  actionType: EngagementActionType;
+  commentText: string;
+  editedText?: string;
+  status: DraftStatus;
+  provider: 'luna' | 'fake';
+  providerMetadata?: Record<string, unknown>;
+  validationReport?: Record<string, unknown>;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+export type EngagementHistory = {
+  id: string;
+  tenantId: string;
+  prospectId: string;
+  postId: string;
+  actionType: EngagementActionType;
+  interactedAt: Date;
+  operatorId: string;
+};
+
+export type ManualTaskStatus = 'PENDING_CONFIRMATION' | 'COMPLETED' | 'FAILED' | 'UNCERTAIN';
+export type ManualTask = {
+  id: string;
+  tenantId: string;
+  actionType: EngagementActionType;
+  status: ManualTaskStatus;
+  outcomeLabel?: 'manual-confirmed';
+  confirmationActor?: string;
+  confirmationMetadata?: Record<string, unknown>;
+  createdAt: Date;
+  completedAt?: Date;
+};

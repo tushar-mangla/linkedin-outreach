@@ -37,7 +37,10 @@ type MemoryStorageTables = {
   sequenceDefinitions: SequenceDefinition[];
   campaignEnrollments: CampaignEnrollment[];
   scheduledActions: ScheduledAction[];
+  manualTasks: Array<{ id: string; tenantId: string; scheduledActionId: string; actionType: 'LIKE' | 'COMMENT'; status: 'PENDING_CONFIRMATION' | 'COMPLETED' | 'FAILED' | 'UNCERTAIN'; outcomeLabel?: 'manual-confirmed' | 'uncertain'; confirmationActor?: string; confirmationMetadata?: Record<string, unknown>; createdAt: Date; completedAt?: Date }>;
 };
+
+export const TERMINAL_SCHEDULED_ACTION_STATUSES: ReadonlyArray<string> = ['COMPLETED', 'FAILED', 'CANCELLED', 'UNCERTAIN'];
 
 export class MemoryStorage implements DBAdapter, BudgetStorageAdapter, LeaseStorageAdapter {
   private tables: MemoryStorageTables = {
@@ -56,6 +59,7 @@ export class MemoryStorage implements DBAdapter, BudgetStorageAdapter, LeaseStor
     sequenceDefinitions: [],
     campaignEnrollments: [],
     scheduledActions: [],
+    manualTasks: [],
   };
 
   // --- Prospect Methods ---
@@ -326,6 +330,8 @@ export class MemoryStorage implements DBAdapter, BudgetStorageAdapter, LeaseStor
   }
 
   async insertScheduledAction(action: Omit<ScheduledAction, 'id' | 'createdAt' | 'updatedAt' | 'status'>): Promise<ScheduledAction> {
+    const existing = this.tables.scheduledActions.find(a => a.tenantId === action.tenantId && a.idempotencyKey === action.idempotencyKey);
+    if (existing) return existing;
     const record: ScheduledAction = {
       id: uuidv4(),
       ...action,
@@ -337,7 +343,27 @@ export class MemoryStorage implements DBAdapter, BudgetStorageAdapter, LeaseStor
     return record;
   }
 
-  async claimNextScheduledAction(tenantId: string, accountId: string, workerId: string): Promise<ScheduledAction | undefined> {
+  async createManualTask(task: { tenantId: string; scheduledActionId: string; actionType: 'LIKE' | 'COMMENT' }): Promise<{ id: string; status: 'PENDING_CONFIRMATION' }> {
+    const existing = this.tables.manualTasks.find(t => t.tenantId === task.tenantId && t.scheduledActionId === task.scheduledActionId);
+    if (existing) return { id: existing.id, status: existing.status as 'PENDING_CONFIRMATION' };
+    const record = { ...task, id: uuidv4(), status: 'PENDING_CONFIRMATION' as const, createdAt: new Date() };
+    this.tables.manualTasks.push(record);
+    return { id: record.id, status: record.status };
+  }
+
+  async completeManualTask(tenantId: string, taskId: string, outcome: 'COMPLETED' | 'FAILED' | 'UNCERTAIN', operatorId: string, metadata?: Record<string, unknown>) {
+    const task = this.tables.manualTasks.find(t => t.tenantId === tenantId && t.id === taskId);
+    if (!task) throw new Error('MANUAL_TASK_NOT_FOUND');
+    if (task.status !== 'PENDING_CONFIRMATION') throw new Error('MANUAL_TASK_TERMINAL');
+    task.status = outcome;
+    task.confirmationActor = operatorId;
+    task.confirmationMetadata = metadata;
+    task.outcomeLabel = outcome === 'COMPLETED' ? 'manual-confirmed' : 'uncertain';
+    task.completedAt = new Date();
+    return { status: task.status, outcomeLabel: task.outcomeLabel };
+  }
+
+  async claimNextScheduledAction(tenantId: string, accountId: string, workerId: string, claimToken?: string): Promise<ScheduledAction | undefined> {
     const now = new Date();
     const action = this.tables.scheduledActions.find(
       a =>
@@ -350,6 +376,7 @@ export class MemoryStorage implements DBAdapter, BudgetStorageAdapter, LeaseStor
       action.status = 'CLAIMED';
       action.claimedBy = workerId;
       action.claimedAt = now;
+      action.claimToken = claimToken ?? `${workerId}:${now.getTime()}`;
       action.updatedAt = now;
     }
     return action;
@@ -358,12 +385,29 @@ export class MemoryStorage implements DBAdapter, BudgetStorageAdapter, LeaseStor
   async updateScheduledActionStatus(actionId: string, status: ScheduledAction['status']): Promise<ScheduledAction | undefined> {
     const action = this.tables.scheduledActions.find(a => a.id === actionId);
     if (action) {
+      if (TERMINAL_SCHEDULED_ACTION_STATUSES.includes(action.status)) {
+        throw new Error('TERMINAL_STATE_IMMUTABLE');
+      }
       action.status = status;
       action.updatedAt = new Date();
-      if (status === 'COMPLETED' || status === 'FAILED' || status === 'UNCERTAIN') {
+      if (TERMINAL_SCHEDULED_ACTION_STATUSES.includes(status)) {
         action.completedAt = new Date();
       }
     }
+    return action;
+  }
+
+  async updateScheduledActionResult(tenantId: string, actionId: string, result: { status: ScheduledAction['status']; outcomeLabel?: ScheduledAction['outcomeLabel']; errorCode?: string }): Promise<ScheduledAction | undefined> {
+    const action = this.tables.scheduledActions.find(a => a.tenantId === tenantId && a.id === actionId);
+    if (!action) return undefined;
+    if (TERMINAL_SCHEDULED_ACTION_STATUSES.includes(action.status)) {
+      throw new Error('TERMINAL_STATE_IMMUTABLE');
+    }
+    action.status = result.status;
+    action.outcomeLabel = result.outcomeLabel;
+    action.errorCode = result.errorCode;
+    action.updatedAt = new Date();
+    if (TERMINAL_SCHEDULED_ACTION_STATUSES.includes(result.status)) action.completedAt = new Date();
     return action;
   }
 
@@ -389,9 +433,9 @@ export class MemoryStorage implements DBAdapter, BudgetStorageAdapter, LeaseStor
       sequenceDefinitions: [],
       campaignEnrollments: [],
       scheduledActions: [],
+      manualTasks: [],
     };
   }
 }
 
 export const memoryStorage = new MemoryStorage();
-

@@ -1,0 +1,256 @@
+import { randomUUID } from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { PGlite } from '@electric-sql/pglite';
+import { drizzle } from 'drizzle-orm/pglite';
+import type { PgliteDatabase } from 'drizzle-orm/pglite';
+import { and, desc, eq } from 'drizzle-orm';
+import * as schema from '../../db/schema.js';
+import { EngagementService } from './engagement-service.js';
+import type { ProspectPostSource } from './prospect-post-source.js';
+import type { EngagementAIProvider } from './engagement-ai-provider.js';
+
+// EngagementService reads the shared drizzle client directly, so redirect it to
+// an isolated in-memory PGlite database migrated from ./drizzle. No DATABASE_URL,
+// provider, browser, or LinkedIn access is used.
+const holder = vi.hoisted(() => ({ db: undefined as unknown }));
+vi.mock('../../db/client.js', () => holder);
+
+let testDb!: PgliteDatabase<typeof schema>;
+
+const TENANT_ID = '00000000-0000-0000-0000-000000000001';
+const ACCOUNT_ID = '00000000-0000-0000-0000-000000000002';
+const OPERATOR_ID = '00000000-0000-0000-0000-000000000009';
+
+function buildService(): EngagementService {
+  const mockPostSource: ProspectPostSource = {
+    sourceType: 'PLAYWRIGHT',
+    findRecentPosts: async () => [
+      {
+        postUrl: 'https://linkedin.com/posts/test-1',
+        postText: 'We need to understand artificial intelligence scaling laws better to succeed with data-driven hiring approaches this year.',
+        authorName: 'Test Author',
+        publishedAtDate: new Date(),
+      },
+    ],
+  };
+  const mockAiProvider: EngagementAIProvider = {
+    providerName: 'fake',
+    generateComment: async () => ({
+      commentText: 'Great insights on scaling laws and hiring approaches!',
+      groundingEvidence: 'artificial intelligence scaling laws',
+    }),
+  };
+  return new EngagementService({
+    postSource: mockPostSource,
+    aiProvider: mockAiProvider,
+  });
+}
+
+async function createProspectWithPost(postHash: string, postUrl: string) {
+  const [prospect] = await testDb
+    .insert(schema.prospects)
+    .values({
+      id: randomUUID(),
+      tenantId: TENANT_ID,
+      linkedinUrl: `https://linkedin.com/in/prospect-${randomUUID()}`,
+      normalizedLinkedinUrl: `https://linkedin.com/in/prospect-${randomUUID()}`,
+      currentStage: 'READY_FOR_CAMPAIGN',
+    })
+    .returning();
+  const [post] = await testDb
+    .insert(schema.engagementPosts)
+    .values({
+      id: randomUUID(),
+      tenantId: TENANT_ID,
+      prospectId: prospect.id,
+      postUrl,
+      postText:
+        'We need to understand artificial intelligence scaling laws better to succeed with data-driven hiring approaches this year.',
+      authorName: 'Fixture Author',
+      contentHash: postHash,
+    })
+    .returning();
+  return { prospect, post };
+}
+
+async function createDraft(postId: string, prospectId: string) {
+  const [draft] = await testDb
+    .insert(schema.engagementDrafts)
+    .values({
+      id: randomUUID(),
+      tenantId: TENANT_ID,
+      postId,
+      prospectId,
+      actionType: 'COMMENT',
+      commentText: 'Initial draft comment for review.',
+      status: 'PENDING',
+      provider: 'fake',
+    })
+    .returning();
+  const post = await testDb.query.engagementPosts.findFirst({
+    where: eq(schema.engagementPosts.id, postId),
+  });
+  await testDb.insert(schema.recommendationRevisions).values({
+    id: randomUUID(),
+    tenantId: TENANT_ID,
+    draftId: draft.id,
+    revision: 1,
+    actionType: 'COMMENT',
+    postHash: post!.contentHash,
+    commentText: 'Initial draft comment for review.',
+    evidence: { source: 'test' },
+    validationReport: { valid: true, reasons: [] },
+    state: 'PENDING',
+  });
+  return draft;
+}
+
+beforeAll(async () => {
+  const client = new PGlite();
+  await client.waitReady;
+  // Apply the forward migration chain with plain exec: the drizzle migrator
+  // sends multi-statement breakpoint chunks as prepared statements, which
+  // PGlite rejects. exec() runs each migration file verbatim instead.
+  const files = fs
+    .readdirSync(path.join(process.cwd(), 'drizzle'))
+    .filter((file) => file.endsWith('.sql'))
+    .sort();
+  for (const file of files) {
+    await client.exec(fs.readFileSync(path.join(process.cwd(), 'drizzle', file), 'utf8'));
+  }
+  testDb = drizzle(client, { schema });
+  (holder as { db: unknown }).db = testDb;
+}, 120000);
+
+describe('engagement-service approvals and manual completion', () => {
+  it('invalidates only the edited draft approval (scoped invalidation)', async () => {
+    const service = buildService();
+    const postHash = 'a'.repeat(64);
+    const { post } = await createProspectWithPost(postHash, `https://fixture.test/scoped-${randomUUID()}`);
+    const draftA = await createDraft(post.id, post.prospectId);
+    const draftB = await createDraft(post.id, post.prospectId);
+
+    await service.applyReviewDecision({ draftId: draftA.id, tenantId: TENANT_ID, decision: 'APPROVED', operatorId: OPERATOR_ID });
+    await service.applyReviewDecision({ draftId: draftB.id, tenantId: TENANT_ID, decision: 'APPROVED', operatorId: OPERATOR_ID });
+
+    await service.applyReviewDecision({
+      draftId: draftA.id,
+      tenantId: TENANT_ID,
+      decision: 'EDITED',
+      editedText:
+        'The perspective on artificial intelligence scaling laws resonates — the emphasis on data-driven approaches specifically mirrors what high-growth teams have shared recently.',
+      operatorId: OPERATOR_ID,
+    });
+
+    // Draft A: latest revision is a new PENDING revision; prior revision superseded.
+    const revisionsA = await testDb.query.recommendationRevisions.findMany({
+      where: and(
+        eq(schema.recommendationRevisions.draftId, draftA.id),
+        eq(schema.recommendationRevisions.tenantId, TENANT_ID),
+      ),
+      orderBy: [desc(schema.recommendationRevisions.revision)],
+    });
+    expect(revisionsA).toHaveLength(2);
+    expect(revisionsA[0].state).toBe('PENDING');
+    expect(revisionsA[0].revision).toBe(2);
+    expect(revisionsA[1].state).toBe('SUPERSEDED');
+
+    // Draft A approvals invalidated; draft A reopened for review.
+    const approvalsA = await testDb.query.recommendationApprovals.findMany({
+      where: and(
+        eq(schema.recommendationApprovals.tenantId, TENANT_ID),
+        eq(schema.recommendationApprovals.revisionId, revisionsA[1].id),
+      ),
+    });
+    expect(approvalsA).toHaveLength(1);
+    expect(approvalsA[0].state).toBe('INVALIDATED');
+    const updatedA = await testDb.query.engagementDrafts.findFirst({
+      where: eq(schema.engagementDrafts.id, draftA.id),
+    });
+    expect(updatedA!.status).toBe('PENDING');
+
+    // Draft B remains approved: revision and approval untouched.
+    const revisionsB = await testDb.query.recommendationRevisions.findMany({
+      where: and(
+        eq(schema.recommendationRevisions.draftId, draftB.id),
+        eq(schema.recommendationRevisions.tenantId, TENANT_ID),
+      ),
+    });
+    expect(revisionsB).toHaveLength(1);
+    expect(revisionsB[0].state).toBe('APPROVED');
+    const approvalsB = await testDb.query.recommendationApprovals.findMany({
+      where: and(
+        eq(schema.recommendationApprovals.tenantId, TENANT_ID),
+        eq(schema.recommendationApprovals.revisionId, revisionsB[0].id),
+      ),
+    });
+    expect(approvalsB).toHaveLength(1);
+    expect(approvalsB[0].state).toBe('APPROVED');
+    const updatedB = await testDb.query.engagementDrafts.findFirst({
+      where: eq(schema.engagementDrafts.id, draftB.id),
+    });
+    expect(updatedB!.status).toBe('APPROVED');
+  });
+
+  it.each([
+    { outcome: 'COMPLETED', outcomeLabel: 'manual-confirmed', actionStatus: 'COMPLETED' },
+    { outcome: 'FAILED', outcomeLabel: 'failed', actionStatus: 'FAILED' },
+    { outcome: 'UNCERTAIN', outcomeLabel: 'uncertain', actionStatus: 'UNCERTAIN' },
+  ] as const)('manual completion $outcome transitions the linked action to $actionStatus', async ({ outcome, outcomeLabel, actionStatus }) => {
+    const service = buildService();
+    const postHash = 'b'.repeat(64);
+    const { post } = await createProspectWithPost(postHash, `https://fixture.test/manual-${randomUUID()}`);
+
+    const [action] = await testDb
+      .insert(schema.scheduledActions)
+      .values({
+        id: randomUUID(),
+        tenantId: TENANT_ID,
+        prospectId: post.prospectId,
+        accountId: ACCOUNT_ID,
+        actionType: 'like',
+        payload: { postUrl: post.postUrl },
+        scheduledFor: new Date(Date.now() - 1000),
+        status: 'CLAIMED',
+        idempotencyKey: `manual-lifecycle-${randomUUID()}`,
+        postHash,
+        mode: 'MANUAL',
+      })
+      .returning();
+    const [task] = await testDb
+      .insert(schema.manualTasks)
+      .values({
+        id: randomUUID(),
+        tenantId: TENANT_ID,
+        scheduledActionId: action.id,
+        actionType: 'LIKE',
+        status: 'PENDING_CONFIRMATION',
+      })
+      .returning();
+
+    const result = await service.recordManualCompletion({
+      taskId: task.id,
+      tenantId: TENANT_ID,
+      operatorId: OPERATOR_ID,
+      outcome,
+    });
+
+    expect(result.status).toBe(outcome);
+    expect(result.taskId).toBe(task.id);
+    expect(result.outcomeLabel).toBe(outcomeLabel);
+
+    const storedTask = await testDb.query.manualTasks.findFirst({
+      where: eq(schema.manualTasks.id, task.id),
+    });
+    expect(storedTask!.status).toBe(outcome);
+    expect(storedTask!.outcomeLabel).toBe(outcomeLabel);
+
+    const storedAction = await testDb.query.scheduledActions.findFirst({
+      where: eq(schema.scheduledActions.id, action.id),
+    });
+    expect(storedAction!.status).toBe(actionStatus);
+    expect(storedAction!.completedAt).not.toBeNull();
+  });
+});

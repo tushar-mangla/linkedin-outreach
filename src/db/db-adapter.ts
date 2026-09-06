@@ -26,8 +26,10 @@ export interface DBAdapter {
     insertAuditEvent(event: Omit<AuditEvent, 'id' | 'createdAt'>): Promise<AuditEvent>;
     getAuditEvents?(tenantId: string): Promise<AuditEvent[]>;
     insertCampaign?(campaign: Omit<Campaign, 'id' | 'createdAt' | 'updatedAt'>): Promise<Campaign>;
-    insertScheduledAction?(action: Omit<ScheduledAction, 'id' | 'createdAt' | 'updatedAt' | 'status'>): Promise<ScheduledAction>;
-    claimNextScheduledAction?(tenantId: string, accountId: string, workerId: string): Promise<ScheduledAction | undefined>;
-    updateScheduledActionStatus?(actionId: string, status: ScheduledAction['status']): Promise<ScheduledAction | undefined>;
+    insertScheduledAction(action: Omit<ScheduledAction, 'id' | 'createdAt' | 'updatedAt' | 'status'>): Promise<ScheduledAction>;
+    claimNextScheduledAction(tenantId: string, accountId: string, workerId: string, claimToken?: string): Promise<ScheduledAction | undefined>;
+    updateScheduledActionStatus(actionId: string, status: ScheduledAction['status']): Promise<ScheduledAction | undefined>;
+    createManualTask(task: { tenantId: string; scheduledActionId: string; actionType: 'LIKE' | 'COMMENT' }): Promise<{ id: string; status: 'PENDING_CONFIRMATION' }>;
+    completeManualTask(tenantId: string, taskId: string, outcome: 'COMPLETED' | 'FAILED' | 'UNCERTAIN', operatorId: string, metadata?: Record<string, unknown>): Promise<{ status: string; outcomeLabel?: 'manual-confirmed' | 'uncertain' }>;
+    updateScheduledActionResult(tenantId: string, actionId: string, result: { status: ScheduledAction['status']; outcomeLabel?: ScheduledAction['outcomeLabel']; errorCode?: string }): Promise<ScheduledAction | undefined>;
 }
-

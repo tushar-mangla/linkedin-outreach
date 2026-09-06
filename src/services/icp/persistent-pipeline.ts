@@ -34,17 +34,14 @@ export class PersistentIcpPipeline {
             normalizedLinkedinUrl: normalizeLinkedinUrl(p.linkedinUrl)
         }));
 
-        // 3. Upsert all prospects to get their IDs
-        const allProspectsForBatch = await Promise.all(prospectsWithNormalizedUrls.map(async (p) => {
+        // 3. Insert new prospects only. Existing prospects retain their current
+        // stage and prior review/evaluation evidence.
+        const prospectResults = await Promise.all(prospectsWithNormalizedUrls.map(async (p) => {
             const { linkedinUrl, normalizedLinkedinUrl, ...customAttributes } = p;
             
             const existingProspect = await this.db.findProspectByTenantAndUrl(tenantId, normalizedLinkedinUrl);
             if (existingProspect) {
-                return await this.db.updateProspect(existingProspect.id, {
-                    linkedinUrl,
-                    customAttributes,
-                    currentStage: 'INGESTED',
-                });
+                return null;
             }
             
             return await this.db.insertProspect({
@@ -54,6 +51,7 @@ export class PersistentIcpPipeline {
                 customAttributes,
             });
         }));
+        const allProspectsForBatch = prospectResults.filter((prospect): prospect is NonNullable<typeof prospect> => prospect !== null);
 
         const icpDef = await this.db.findIcpDefinitionById(icpDefinitionId);
         if (!icpDef) throw new Error('ICP Definition not found');
@@ -240,5 +238,4 @@ export class PersistentIcpPipeline {
         return exportProspectsToCsv(rows as any);
     }
 }
-
 

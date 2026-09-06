@@ -19,7 +19,9 @@ export interface ManualTask {
   timestamp: string;
 }
 
-// In-memory queue for manual tasks
+// In-memory queue for manual tasks (offline/test convenience only).
+// The durable manual_tasks table is the production authority; this queue must
+// never be treated as execution evidence.
 export const manualTaskQueue: ManualTask[] = [];
 
 export class ManualExecutor implements LinkedInExecutor {
@@ -41,16 +43,19 @@ export class ManualExecutor implements LinkedInExecutor {
     };
 
     manualTaskQueue.push(task);
-    console.log(`[ManualExecutor] Created task ${taskId}: ${description}`);
 
     const { eventId, payloadHash } = await auditLogger.record({
       action: `createManualTask:${type}`,
       actor: 'ManualExecutor',
-      details: { ...details, taskId },
+      // Redacted: task descriptions reference public LinkedIn URLs only; never
+      // include cookies, tokens, or profile paths.
+      details: { taskId, type },
     });
 
     return {
-      success: true,
+      success: false,
+      outcomeLabel: undefined,
+      errorCode: 'MANUAL_CONFIRMATION_PENDING',
       timestamp,
       audit: {
         eventId,

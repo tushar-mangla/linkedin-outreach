@@ -4,6 +4,10 @@ import { BudgetService } from './budget-service.js';
 import { LinkedInExecutor, ActionResult } from '../executors/types.js';
 import { ScheduledAction } from '../types.js';
 import { AuditLogger, auditLogger } from '../lib/audit.js';
+import { SafetyGate } from './safety-gate.js';
+import type { SafetyActionInput } from './engagement/execution-contracts.js';
+import { randomUUID } from 'node:crypto';
+import { redactForAudit } from './safety-resolver.js';
 
 export interface ActionQueueServiceOptions {
   db: DBAdapter;
@@ -11,6 +15,8 @@ export interface ActionQueueServiceOptions {
   budgetService: BudgetService;
   executor: LinkedInExecutor;
   logger?: AuditLogger;
+  safetyGate?: SafetyGate;
+  resolveSafety: (action: ScheduledAction, tenantId: string) => Promise<SafetyActionInput | undefined>;
 }
 
 export class ActionQueueService {
@@ -19,6 +25,8 @@ export class ActionQueueService {
   private budgetService: BudgetService;
   private executor: LinkedInExecutor;
   private logger: AuditLogger;
+  private safetyGate: SafetyGate;
+  private resolveSafety: ActionQueueServiceOptions['resolveSafety'];
 
   constructor(options: ActionQueueServiceOptions) {
     this.db = options.db;
@@ -26,6 +34,8 @@ export class ActionQueueService {
     this.budgetService = options.budgetService;
     this.executor = options.executor;
     this.logger = options.logger || auditLogger;
+    this.safetyGate = options.safetyGate || new SafetyGate();
+    this.resolveSafety = options.resolveSafety;
   }
 
   public async scheduleAction(
@@ -51,13 +61,26 @@ export class ActionQueueService {
       }
     }
 
-    // 2. Claim Next Scheduled Action
-    if (!this.db.claimNextScheduledAction) {
-      throw new Error('Database adapter does not support claiming scheduled actions');
-    }
-    const action = await this.db.claimNextScheduledAction(tenantId, accountId, workerId);
+    // 2. Claim Next Scheduled Action (atomic, token-bound lease on the row)
+    const claimToken = randomUUID();
+    const action = await this.db.claimNextScheduledAction(tenantId, accountId, workerId, claimToken);
     if (!action) {
       return { processed: false, reason: 'NO_PENDING_ACTIONS' };
+    }
+
+    if (action.actionType === 'like' || action.actionType === 'comment') {
+      const safety = await this.resolveSafety(action, tenantId);
+      if (!safety || safety.tenantId !== tenantId || safety.actionType !== action.actionType.toUpperCase() || safety.postHash !== action.postHash || safety.revisionId !== action.revisionId) {
+        await this.db.updateScheduledActionResult(tenantId, action.id, { status: 'FAILED', outcomeLabel: 'failed', errorCode: 'SAFETY_CONTEXT_REQUIRED' });
+        return { processed: true, action, reason: 'SAFETY_CONTEXT_REQUIRED' };
+      }
+      try {
+        this.safetyGate.assertActionSafe(safety);
+      } catch (error) {
+        await this.db.updateScheduledActionResult(tenantId, action.id, { status: 'FAILED', outcomeLabel: 'failed', errorCode: (error as Error).message });
+        await this.logger.record({ action: 'action.refused', actor: workerId, tenantId, entityType: 'scheduled_action', entityId: action.id, details: redactForAudit({ code: (error as Error).message, claimToken }) });
+        return { processed: true, action, reason: (error as Error).message };
+      }
     }
 
     // 3. Check Daily Budget Reservation
@@ -71,17 +94,15 @@ export class ActionQueueService {
     );
 
     if (!reservationId) {
-      // Out of daily quota: revert status back to PENDING for subsequent window
-      if (this.db.updateScheduledActionStatus) {
-        await this.db.updateScheduledActionStatus(action.id, 'PENDING');
-      }
+      // Out of daily quota: revert claim back to PENDING for subsequent window
+      await this.db.updateScheduledActionResult(tenantId, action.id, { status: 'PENDING', errorCode: 'BUDGET_EXCEEDED' });
       await this.logger.record({
         action: 'action.budget_exceeded',
         actor: workerId,
         tenantId,
         entityType: 'scheduled_action',
         entityId: action.id,
-        details: { actionType: action.actionType, date: today.toISOString() },
+        details: redactForAudit({ actionType: action.actionType, date: today.toISOString(), claimToken }),
       });
       return { processed: false, action, reason: 'BUDGET_EXCEEDED' };
     }
@@ -112,51 +133,65 @@ export class ActionQueueService {
             message: String(payload.message || ''),
           });
           break;
+        case 'like':
+          result = await this.executor.likePost({
+            scheduledActionId: action.id,
+            postUrl: String(payload.postUrl || ''),
+          });
+          break;
+        case 'comment':
+          result = await this.executor.publishComment({
+            scheduledActionId: action.id,
+            postUrl: String(payload.postUrl || ''),
+            comment: String(payload.comment || ''),
+          });
+          break;
         default:
           throw new Error(`Unsupported action type: ${action.actionType}`);
       }
 
       if (result.success) {
         await this.budgetService.commitAction(reservationId);
-        if (this.db.updateScheduledActionStatus) {
-          await this.db.updateScheduledActionStatus(action.id, 'COMPLETED');
-        }
+        await this.db.updateScheduledActionResult(tenantId, action.id, { status: 'COMPLETED', outcomeLabel: result.outcomeLabel });
         await this.logger.record({
           action: `action.${action.actionType}.completed`,
           actor: workerId,
           tenantId,
           entityType: 'scheduled_action',
           entityId: action.id,
-          details: { ...payload, result },
+          details: redactForAudit({ result, claimToken }),
         });
         return { processed: true, action, result };
       } else {
         await this.budgetService.releaseBudget(reservationId);
-        if (this.db.updateScheduledActionStatus) {
-          await this.db.updateScheduledActionStatus(action.id, 'FAILED');
-        }
+         if (result.errorCode === 'MANUAL_CONFIRMATION_PENDING') {
+           await this.db.createManualTask({ tenantId, scheduledActionId: action.id, actionType: action.actionType.toUpperCase() as 'LIKE' | 'COMMENT' });
+           // Keep the action CLAIMED (non-claimable) until the manual task resolves it.
+           // Resetting to PENDING here would allow a second worker to re-claim it.
+           await this.db.updateScheduledActionResult(tenantId, action.id, { status: 'CLAIMED', outcomeLabel: result.outcomeLabel, errorCode: result.errorCode });
+         } else {
+           await this.db.updateScheduledActionResult(tenantId, action.id, { status: 'FAILED', outcomeLabel: result.outcomeLabel, errorCode: result.errorCode });
+         }
         await this.logger.record({
           action: `action.${action.actionType}.failed`,
           actor: workerId,
           tenantId,
           entityType: 'scheduled_action',
           entityId: action.id,
-          details: { ...payload, result },
+          details: redactForAudit({ result, claimToken }),
         });
         return { processed: true, action, result, reason: 'EXECUTION_FAILED' };
       }
     } catch (error: any) {
       await this.budgetService.releaseBudget(reservationId);
-      if (this.db.updateScheduledActionStatus) {
-        await this.db.updateScheduledActionStatus(action.id, 'UNCERTAIN');
-      }
+       await this.db.updateScheduledActionResult(tenantId, action.id, { status: 'UNCERTAIN', outcomeLabel: 'uncertain', errorCode: 'EXECUTION_UNCERTAIN' });
       await this.logger.record({
         action: `action.${action.actionType}.uncertain`,
         actor: workerId,
         tenantId,
         entityType: 'scheduled_action',
         entityId: action.id,
-        details: { error: error.message },
+        details: redactForAudit({ error: error.message, claimToken }),
       });
       return { processed: false, action, reason: error.message };
     }
