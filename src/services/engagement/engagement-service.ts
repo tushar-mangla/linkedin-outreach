@@ -14,6 +14,7 @@ import {
   scheduledActions,
   manualTasks,
   dailyActionBudgets,
+  campaignEnrollments,
 } from '../../db/schema.js';
 import { DEFAULT_OPERATOR_ID } from '../../types.js';
 import type { EngagementDraft, EngagementHistory, LinkedInPost } from '../../types.js';
@@ -518,7 +519,12 @@ export class EngagementService {
         return { status: 'QUEUED', action: existingAction, refusal: null };
       }
     }
-    const action = await db.insert(scheduledActions).values({ tenantId: input.tenantId, prospectId: draft.prospectId, accountId: input.accountId, actionType: request.actionType.toLowerCase(), payload, scheduledFor: new Date(), idempotencyKey: semanticKey, revisionId: revision.id, postHash: post.contentHash, mode: request.mode }).onConflictDoNothing().returning();
+    const enrollment = await db.query.campaignEnrollments.findFirst({
+      where: eq(campaignEnrollments.prospectId, draft.prospectId),
+      orderBy: [desc(campaignEnrollments.createdAt)]
+    });
+    
+    const action = await db.insert(scheduledActions).values({ tenantId: input.tenantId, prospectId: draft.prospectId, campaignEnrollmentId: enrollment?.id, accountId: input.accountId, actionType: request.actionType.toLowerCase(), payload, scheduledFor: new Date(), idempotencyKey: semanticKey, revisionId: revision.id, postHash: post.contentHash, mode: request.mode }).onConflictDoNothing().returning();
     if (!action[0]) {
       const raced = await db.query.scheduledActions.findFirst({ where: and(eq(scheduledActions.tenantId, input.tenantId), eq(scheduledActions.idempotencyKey, semanticKey)) });
       if (raced) return { status: 'QUEUED', action: raced, refusal: null };

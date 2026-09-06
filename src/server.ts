@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import './logger.js'; // Must be imported early to intercept console logs
 // Server initialization with OpenCLI and DEV auth
 import express from 'express';
 import fs from 'node:fs';
@@ -901,8 +902,29 @@ app.post('/api/queue/process', async (req, res) => {
 app.get('/api/queue/actions', async (req, res) => {
   try {
     const tenantId = tenantOf(req);
-    const rows = await withRequestTenant(req, () => db.select().from(scheduledActions).where(eq(scheduledActions.tenantId, tenantId)).orderBy(desc(scheduledActions.createdAt)));
-    res.json(rows.slice(0, 100));
+    const rows = await withRequestTenant(req, () =>
+      db.select({
+        action: scheduledActions,
+        prospectAttrs: prospects.customAttributes,
+        prospectUrl: prospects.linkedinUrl,
+        campaignName: campaigns.name,
+      })
+      .from(scheduledActions)
+      .leftJoin(prospects, eq(scheduledActions.prospectId, prospects.id))
+      .leftJoin(campaignEnrollments, eq(scheduledActions.campaignEnrollmentId, campaignEnrollments.id))
+      .leftJoin(campaigns, eq(campaignEnrollments.campaignId, campaigns.id))
+      .where(eq(scheduledActions.tenantId, tenantId))
+      .orderBy(desc(scheduledActions.createdAt))
+    );
+    
+    const enriched = rows.map(r => ({
+      ...r.action,
+      prospectName: (r.prospectAttrs as any)?.name || 'Unknown Prospect',
+      prospectUrl: r.prospectUrl,
+      campaignName: r.campaignName || 'Unknown Campaign'
+    }));
+    
+    res.json(enriched.slice(0, 100));
   } catch (err) {
     res.status(500).json(structuredRefusal('TENANT_FORBIDDEN', errorResponse(err), correlationOf(req)));
   }
@@ -933,6 +955,24 @@ app.post('/api/queue/retry-failed', async (req, res) => {
   }
 });
 
+app.post('/api/queue/clear', async (req, res) => {
+  try {
+    const tenantId = tenantOf(req);
+    // Delete all PENDING actions to stop the queue from processing further
+    const result = await withRequestTenant(req, () =>
+      db.delete(scheduledActions)
+        .where(and(
+          eq(scheduledActions.tenantId, tenantId),
+          eq(scheduledActions.status, 'PENDING')
+        ))
+        .returning({ id: scheduledActions.id })
+    );
+    res.json({ cleared: result.length, ids: result.map(r => r.id), correlationId: correlationOf(req) });
+  } catch (err) {
+    res.status(500).json(structuredRefusal('EXECUTION_FAILED', errorResponse(err), correlationOf(req)));
+  }
+});
+
 app.get('/api/execution/audit', async (req, res) => {
   try {
     const tenantId = tenantOf(req);
@@ -945,15 +985,22 @@ app.get('/api/execution/audit', async (req, res) => {
 
 
 // ─── Server-side auto-drain worker ───────────────────────────────────────────
-// Processes one PENDING action every 60 seconds so the queue drains even if
+// Processes one PENDING action every 180 seconds so the queue drains even if
 // the browser tab is closed after clicking "Run Campaign".
 
-const AUTO_DRAIN_GAP_MS = 60_000;
+const AUTO_DRAIN_GAP_MS = 180_000;
 const AUTO_DRAIN_WORKER_ID = 'server-auto-drain-v1';
 let autoDrainRunning = false;
+let consecutiveSessionFailures = 0;
 
 async function runAutoDrainCycle(): Promise<void> {
   if (autoDrainRunning) return; // Prevent concurrent runs
+  
+  if (consecutiveSessionFailures >= 3) {
+    console.log('[AutoDrain] PAUSED due to 3 consecutive SESSION_EXPIRED errors. Please log in again and restart the server.');
+    return;
+  }
+  
   autoDrainRunning = true;
   try {
     // Find the oldest PENDING action to determine which tenant/account/mode to use
@@ -993,9 +1040,22 @@ async function runAutoDrainCycle(): Promise<void> {
       console.log(
         `[AutoDrain] ✓ ${result.action?.actionType?.toUpperCase()} → ${result.result?.outcomeLabel ?? result.reason ?? 'done'}`
       );
+      
+      if (result.result?.outcomeLabel === 'failed' && result.result?.errorCode === 'SESSION_EXPIRED') {
+        consecutiveSessionFailures++;
+        console.log(`[AutoDrain] WARNING: Session expired (${consecutiveSessionFailures}/3)`);
+      } else if (result.result?.outcomeLabel && result.result?.outcomeLabel !== 'failed') {
+         // Reset consecutive errors if an action succeeds
+         consecutiveSessionFailures = 0;
+      }
     } else {
       console.log(`[AutoDrain] Queue empty or skipped: ${result.reason}`);
     }
+
+    // Release the lease so the next cycle can run on time
+    await withRequestTenantUnsafe(tenantId, () => 
+      leaseService.releaseLease(tenantId, accountId, AUTO_DRAIN_WORKER_ID, leaseResult.leaseToken!)
+    );
   } catch (err) {
     console.error('[AutoDrain] Error:', (err as Error).message);
   } finally {
@@ -1005,12 +1065,79 @@ async function runAutoDrainCycle(): Promise<void> {
 
 // Status endpoint so the UI can confirm the auto-drain worker is alive
 app.get('/api/queue/drain/status', (_req, res) => {
-  res.json({ autoDrainEnabled: true, gapSeconds: AUTO_DRAIN_GAP_MS / 1000, workerId: AUTO_DRAIN_WORKER_ID });
+  res.json({ autoDrainEnabled: true, gapSeconds: AUTO_DRAIN_GAP_MS / 1000, workerId: AUTO_DRAIN_WORKER_ID, paused: consecutiveSessionFailures >= 3 });
 });
+
+let autoApproveRunning = false;
+async function autoApproveAndQueueCycle(): Promise<void> {
+  if (autoApproveRunning) return;
+  autoApproveRunning = true;
+  try {
+    // Check if the queue already has PENDING items. If it does, wait for it to drain first.
+    const existingQueueCount = await db.query.scheduledActions.findMany({
+      where: eq(scheduledActions.status, 'PENDING')
+    });
+    
+    if (existingQueueCount.length > 0) {
+      return;
+    }
+
+    const pendingDrafts = await db.query.engagementDrafts.findMany({
+      where: eq(engagementDrafts.status, 'PENDING')
+    });
+    
+    if (pendingDrafts.length > 0) {
+      console.log(`[AutoQueue] Found ${pendingDrafts.length} pending drafts. Auto-approving...`);
+    }
+    
+    for (const draft of pendingDrafts) {
+      const tenantId = String(draft.tenantId);
+      
+      // 1. Approve
+      await withRequestTenantUnsafe(tenantId, () => 
+        engagementService.applyReviewDecision({
+          draftId: draft.id,
+          tenantId,
+          decision: 'APPROVED',
+          operatorId: 'system-auto'
+        })
+      );
+      
+      // 2. Queue
+      const mode = process.env.FEATURE_05_BROWSER_ENABLED === '1' ? 'BROWSER' : 'SIMULATE';
+      const accountId = '00000000-0000-0000-0000-000000000002'; // default
+      await withRequestTenantUnsafe(tenantId, () => ensureSupervisedDefaults(tenantId, accountId));
+      
+      try {
+        await withRequestTenantUnsafe(tenantId, () =>
+          engagementService.requestAction({
+            draftId: draft.id,
+            tenantId,
+            actionType: draft.actionType as 'LIKE' | 'COMMENT',
+            mode,
+            accountId,
+            idempotencyKey: `auto-${draft.id}-${Date.now()}`
+          })
+        );
+        console.log(`[AutoQueue] Automatically queued ${draft.actionType} for draft ${draft.id}`);
+      } catch (err: any) {
+        if (err.message !== 'ACTION_DUPLICATE') {
+          console.error(`[AutoQueue] Failed to queue draft ${draft.id}:`, err);
+        }
+      }
+    }
+  } catch (err) {
+    console.error(`[AutoQueue] Cycle failed:`, err);
+  } finally {
+    autoApproveRunning = false;
+  }
+}
 
 if (process.env.VITEST !== 'true' && process.env.NODE_ENV !== 'test') {
   setInterval(runAutoDrainCycle, AUTO_DRAIN_GAP_MS);
+  setInterval(autoApproveAndQueueCycle, 30_000); // Check for new drafts every 30s
   console.log(`[AutoDrain] Server-side queue drain worker started (gap: ${AUTO_DRAIN_GAP_MS / 1000}s)`);
+  console.log(`[AutoQueue] Auto-approve and queue worker started (every 30s)`);
   listenWithFallback(port);
 }
 

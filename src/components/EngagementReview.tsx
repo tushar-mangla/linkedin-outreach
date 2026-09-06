@@ -15,6 +15,7 @@ interface EngagementReviewProps {
   onScanProspect: (id: string) => void;
   onDeleteProspect: (prospect: any) => void;
   onRunCampaign: () => void;
+  onStopCampaign: () => void;
   onRetryFailed: () => void;
   onSkipCommentWithLike: (draft: any, draftsForProspect: any[]) => void;
 }
@@ -33,6 +34,7 @@ export function EngagementReview({
   onScanProspect,
   onDeleteProspect,
   onRunCampaign,
+  onStopCampaign,
   onRetryFailed,
   onSkipCommentWithLike,
 }: EngagementReviewProps) {
@@ -179,6 +181,26 @@ export function EngagementReview({
                   ? '✓ All Done'
                   : `▶ Run Campaign (${pendingCount} draft${pendingCount > 1 ? 's' : ''})`}
               </button>
+
+              {/* Stop Campaign button */}
+              {(isCampaignRunning || pendingCount > 0) && (
+                <button
+                  type="button"
+                  onClick={onStopCampaign}
+                  style={{
+                    border: '0',
+                    background: '#d32f2f',
+                    color: '#fff',
+                    padding: '6px 12px',
+                    borderRadius: '6px',
+                    fontSize: '11px',
+                    fontWeight: '700',
+                    cursor: 'pointer',
+                  }}
+                >
+                  🛑 Stop Campaign (Clear Queue)
+                </button>
+              )}
 
               <button
                 type="button"
