@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { db, withTenantTransaction } from './db/client.js';
 import { and, asc, desc, eq, inArray } from 'drizzle-orm';
-import { icpDefinitions, importBatches, prospects, engagementPosts, engagementControls, browserAccounts, auditEvents, scheduledActions, reviewDecisions, icpEvaluations, manualTasks, executionEvidence, engagementHistory, campaignEnrollments } from './db/schema.js';
+import { icpDefinitions, importBatches, prospects, engagementPosts, engagementControls, browserAccounts, auditEvents, scheduledActions, reviewDecisions, icpEvaluations, manualTasks, executionEvidence, engagementHistory, campaignEnrollments, campaigns } from './db/schema.js';
 import { IcpCriteriaSchema } from './schemas/icp.js';
 import { importProspectsFromCsv } from './services/icp/csv-importer.js';
 import { icpPipeline } from './services/icp/index.js';
@@ -27,7 +27,7 @@ import { PlaywrightExecutor } from './executors/playwright.js';
 import { SafetyGate } from './services/safety-gate.js';
 import { isWithinWorkingHours } from './services/safety-resolver.js';
 import { recommendationRevisions, recommendationApprovals, engagementDrafts, dailyActionBudgets } from './db/schema.js';
-import { ProspectDiscoveryService } from './services/discovery/prospect-discovery-service.js';
+import { ProspectDiscoveryService, discoveryDedupeKey } from './services/discovery/prospect-discovery-service.js';
 import { GoogleXraySource, XrayBlockedError, XrayNetworkError, XrayRateLimitedError } from './services/discovery/google-xray-source.js';
 import { OpenCliLinkedinSource, OpenCliUnavailableError, OpenCliExecutionError } from './services/discovery/opencli-linkedin-source.js';
 import { DEFAULT_XRAY_NICHES, DEFAULT_XRAY_TITLES } from './services/discovery/xray-query-builder.js';
@@ -232,11 +232,41 @@ app.post('/api/imports/:id/process', async (request, response) => {
   }
 });
 
+// ─── Campaign routes ──────────────────────────────────────────────────────────
+
+app.get('/api/campaigns', async (request, response) => {
+  try {
+    const tenantId = tenantOf(request);
+    const rows = await withRequestTenant(request, () => db.select().from(campaigns).where(eq(campaigns.tenantId, tenantId)).orderBy(desc(campaigns.createdAt)));
+    
+    const enriched = await Promise.all(rows.map(async (c) => {
+      const enrollments = await withRequestTenant(request, () => db.select().from(campaignEnrollments).where(eq(campaignEnrollments.campaignId, c.id)));
+      return {
+        ...c,
+        enrolledCount: enrollments.length,
+      };
+    }));
+    response.json(enriched);
+  } catch (error) {
+    response.status(500).json(structuredRefusal('TENANT_FORBIDDEN', errorResponse(error), correlationOf(request)));
+  }
+});
+
 // ─── Prospect routes ──────────────────────────────────────────────────────────
 
 app.get('/api/prospects', async (request, response) => {
   const tenantId = tenantOf(request);
-  const results = await withRequestTenant(request, () => db.select().from(prospects).where(eq(prospects.tenantId, tenantId)).orderBy(desc(prospects.updatedAt)));
+  const campaignId = typeof request.query.campaignId === 'string' && request.query.campaignId.trim() ? request.query.campaignId.trim() : undefined;
+
+  let results;
+  if (campaignId) {
+    const enrollments = await withRequestTenant(request, () => db.select({ prospectId: campaignEnrollments.prospectId }).from(campaignEnrollments).where(eq(campaignEnrollments.campaignId, campaignId)));
+    const ids = enrollments.map(e => e.prospectId);
+    if (ids.length === 0) return response.json([]);
+    results = await withRequestTenant(request, () => db.select().from(prospects).where(and(eq(prospects.tenantId, tenantId), inArray(prospects.id, ids))).orderBy(desc(prospects.updatedAt)));
+  } else {
+    results = await withRequestTenant(request, () => db.select().from(prospects).where(eq(prospects.tenantId, tenantId)).orderBy(desc(prospects.updatedAt)));
+  }
   response.json(results);
 });
 
@@ -289,6 +319,33 @@ app.delete('/api/prospects/:id', async (request, response) => {
   }
 });
 
+app.get('/api/prospects/discovery-state', async (request, response) => {
+  try {
+    const tenantId = tenantOf(request);
+    const icp = await withRequestTenant(request, () => db.query.icpDefinitions.findFirst({
+      where: eq(icpDefinitions.tenantId, tenantId),
+      orderBy: [desc(icpDefinitions.updatedAt)],
+    }));
+    const criteria = (icp?.criteria ?? {}) as Record<string, unknown>;
+    const lastPage = typeof criteria.lastDiscoveredPage === 'number' ? criteria.lastDiscoveredPage : 1;
+    const nextPage = typeof criteria.lastNextPage === 'number' ? criteria.lastNextPage : lastPage + 1;
+    const countries = Array.isArray(criteria.lastCountries) ? (criteria.lastCountries as string[]) : ['US'];
+    const positions = Array.isArray(criteria.lastPositions) ? (criteria.lastPositions as string[]) : ['Director'];
+    const keyword = typeof criteria.lastKeyword === 'string' ? criteria.lastKeyword : 'recruitment';
+
+    response.json({
+      page: lastPage,
+      nextPage,
+      countries,
+      positions,
+      keyword,
+      icpDefinitionId: icp?.id ?? null,
+    });
+  } catch (error) {
+    response.status(500).json(structuredRefusal('TENANT_FORBIDDEN', errorResponse(error), correlationOf(request)));
+  }
+});
+
 // ─── Automated OpenCLI LinkedIn prospect discovery ──────────────────────────
 // One-click discovery uses the authenticated OpenCLI LinkedIn browser session,
 // dedupes by canonical LinkedIn URL, and ingests matches
@@ -307,6 +364,16 @@ app.post('/api/prospects/discover', async (request, response) => {
     if (locations !== undefined && locations.some(l => l.length > 80)) {
       return response.status(400).json(structuredRefusal('ICP_INVALID', 'Each location must be 80 characters or fewer', correlationId));
     }
+
+    const countries = Array.isArray(body.countries)
+      ? body.countries.filter((c): c is string => typeof c === 'string').map(c => c.trim()).filter(Boolean)
+      : undefined;
+    const positions = Array.isArray(body.positions)
+      ? body.positions.filter((p): p is string => typeof p === 'string').map(p => p.trim()).filter(Boolean)
+      : undefined;
+    const keyword = typeof body.keyword === 'string' && body.keyword.trim() ? body.keyword.trim() : undefined;
+    const page = typeof body.page === 'number' && body.page > 0 ? body.page : 1;
+
     const maxResults = body.maxResults === undefined ? 10 : Number(body.maxResults);
     if (!Number.isInteger(maxResults) || maxResults < 1 || maxResults > 25) {
       return response.status(400).json(structuredRefusal('ICP_INVALID', 'maxResults must be an integer between 1 and 25', correlationId));
@@ -351,10 +418,28 @@ app.post('/api/prospects/discover', async (request, response) => {
     const resolvedIcpId = icpDefinitionId as string;
     const openCliSource = new OpenCliLinkedinSource();
     const fallbackSource = new GoogleXraySource();
+
+    const countriesLabel = (countries ?? ['US']).join(', ');
+    const positionsLabel = (positions ?? ['Director']).join(', ');
+    const campaignName = `Discovery — ${countriesLabel} | ${positionsLabel} | Page ${page}`;
+
+    const createdCampaignRows = await withRequestTenant(request, () => db.insert(campaigns).values({
+      tenantId,
+      name: campaignName,
+      roleId: resolvedIcpId,
+      status: 'ACTIVE',
+    }).returning());
+    const createdCampaign = createdCampaignRows[0];
+
     const service = new ProspectDiscoveryService({
       searchCandidates: async (query) => {
         try {
-          return await openCliSource.search(query);
+          return await openCliSource.search(query, {
+            countries,
+            positions,
+            keywords: keyword,
+            page,
+          });
         } catch (error) {
           if (!(error instanceof OpenCliUnavailableError) && !(error instanceof OpenCliExecutionError)) throw error;
           console.warn(`OpenCLI discovery failed (${(error as Error).message}), falling back to Google X-Ray`);
@@ -369,7 +454,36 @@ app.post('/api/prospects/discover', async (request, response) => {
         return new Set(rows.map(r => String(r.normalizedLinkedinUrl).toLowerCase()));
       },
       ingest: async (tId, icpId, rows) => {
-        await withRequestTenant(request, () => icpPipeline.run(tId, icpId, rows, 'opencli-linkedin-discovery.csv'));
+        await withRequestTenant(request, () => icpPipeline.run(tId, icpId, rows, `opencli-linkedin-discovery-p${page}.csv`));
+        const normalizedUrls = rows.map((r) => discoveryDedupeKey(r.linkedinUrl)).filter((k): k is string => k !== null);
+        if (normalizedUrls.length > 0 && createdCampaign) {
+          const matchedProspects = await withRequestTenant(request, () => db.select().from(prospects).where(and(eq(prospects.tenantId, tId), inArray(prospects.normalizedLinkedinUrl, normalizedUrls))));
+          for (const p of matchedProspects) {
+            const currentAttrs = (p.customAttributes as Record<string, unknown>) ?? {};
+            await withRequestTenant(request, () => db.update(prospects).set({
+              currentStage: 'READY_FOR_CAMPAIGN',
+              customAttributes: {
+                ...currentAttrs,
+                campaignId: createdCampaign.id,
+                campaignName: createdCampaign.name,
+                page,
+              },
+            }).where(eq(prospects.id, p.id)));
+
+            await withRequestTenant(request, () => db.insert(campaignEnrollments).values({
+              campaignId: createdCampaign.id,
+              prospectId: p.id,
+              currentStep: 0,
+              status: 'ENROLLED',
+            }).onConflictDoNothing());
+
+            try {
+              await withRequestTenant(request, () => engagementService.scanProspect(tId, p.id));
+            } catch (scanErr) {
+              console.warn(`Auto-scan for prospect ${p.id} skipped or failed: ${(scanErr as Error).message}`);
+            }
+          }
+        }
       },
       countStages: async (tId, normalizedUrls) => {
         if (normalizedUrls.length === 0) return { qualified: 0, reviewRequired: 0, disqualified: 0 };
@@ -395,7 +509,63 @@ app.post('/api/prospects/discover', async (request, response) => {
       maxResults,
       locationDefault: locations?.[0],
     });
-    response.status(201).json({ status: 'completed', ...report, correlationId });
+
+    // Persist latest discovery page state to DB (icpDefinitions.criteria & auditEvents)
+    if (resolvedIcpId) {
+      const updatedCriteria = {
+        ...(criteria ?? {}),
+        lastDiscoveredPage: page,
+        lastNextPage: page + 1,
+        lastCountries: countries ?? ['US'],
+        lastPositions: positions ?? ['Director'],
+        lastKeyword: keyword ?? 'recruitment',
+        lastCampaignId: createdCampaign?.id,
+        lastCampaignName: createdCampaign?.name,
+      };
+      await withRequestTenant(request, () => db.update(icpDefinitions).set({
+        criteria: updatedCriteria,
+        updatedAt: new Date(),
+      }).where(and(eq(icpDefinitions.id, resolvedIcpId), eq(icpDefinitions.tenantId, tenantId))));
+    }
+
+    await withRequestTenant(request, () => new DrizzleAdapter(db as never).insertAuditEvent({
+      tenantId,
+      eventType: 'discovery.run.completed',
+      entityType: 'icp_definition',
+      entityId: resolvedIcpId,
+      payload: {
+        page,
+        nextPage: page + 1,
+        countries: countries ?? ['US'],
+        positions: positions ?? ['Director'],
+        keyword: keyword ?? 'recruitment',
+        campaignId: createdCampaign?.id,
+        campaignName: createdCampaign?.name,
+        discovered: report.discovered,
+        uniqueIngested: report.uniqueIngested,
+        duplicatesSkipped: report.duplicatesSkipped,
+        qualified: report.qualified,
+        reviewRequired: report.reviewRequired,
+        disqualified: report.disqualified,
+        operatorId: operatorOf(request),
+        correlationId,
+      },
+    }));
+
+    response.status(201).json({
+      status: 'completed',
+      page,
+      nextPage: page + 1,
+      countries: countries ?? ['US'],
+      positions: positions ?? ['Director'],
+      keyword: keyword ?? 'recruitment',
+      campaign: createdCampaign ? {
+        id: createdCampaign.id,
+        name: createdCampaign.name,
+      } : null,
+      ...report,
+      correlationId,
+    });
   } catch (error) {
     const correlationId = correlationOf(request);
     if (error instanceof XrayRateLimitedError) {
@@ -417,18 +587,6 @@ app.post('/api/prospects/discover', async (request, response) => {
   }
 });
 
-app.post('/api/prospects/:id/review', async (request, response) => {
-  try {
-    const tenantId = tenantOf(request);
-    const decision = request.body?.decision === 'APPROVED' ? 'READY_FOR_CAMPAIGN' : 'REJECTED';
-    await withRequestTenant(request, () => icpPipeline.applyOverride(tenantId, request.params.id, decision));
-    const result = await withRequestTenant(request, () => db.query.prospects.findFirst({ where: and(eq(prospects.id, request.params.id), eq(prospects.tenantId, tenantId)) }));
-    if (!result) return response.status(404).json(structuredRefusal('ICP_INVALID', 'Prospect not found', correlationOf(request)));
-    response.json(result);
-  } catch (error) {
-    response.status(400).json(structuredRefusal('ICP_INVALID', errorResponse(error), correlationOf(request)));
-  }
-});
 
 app.get('/api/exports/approved.csv', async (request, response) => {
   const tenantId = tenantOf(request);

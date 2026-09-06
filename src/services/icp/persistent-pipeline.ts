@@ -111,7 +111,7 @@ export class PersistentIcpPipeline {
                 continue;
             }
 
-            // 5. Gemini Evaluation
+            // 5. Evaluation
             const evaluationResult = await this.evaluator.evaluate(prospectInput, criteria);
             
             await this.db.insertIcpEvaluation({
@@ -122,10 +122,10 @@ export class PersistentIcpPipeline {
                 score: evaluationResult.score,
                 confidence: evaluationResult.confidence,
                 fitBreakdown: evaluationResult.fitBreakdown,
-                evidence: evaluationResult.evidence.join('\n'),
+                evidence: Array.isArray(evaluationResult.evidence) ? evaluationResult.evidence.join('\n') : (evaluationResult.evidence ?? ''),
                 reasoning: evaluationResult.reasoning,
                 status: 'EVALUATED',
-                evaluatedBy: 'gemini',
+                evaluatedBy: 'evaluator',
             });
 
             await this.db.insertAuditEvent({

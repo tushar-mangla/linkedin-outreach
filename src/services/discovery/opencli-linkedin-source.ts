@@ -169,6 +169,74 @@ function pageIdFromOpenOutput(output: string): string | null {
   return null;
 }
 
+export const LINKEDIN_COUNTRY_URN_MAP: Record<string, string> = {
+  US: '103644278', // United States
+  UK: '101165590', // United Kingdom
+  CA: '101174742', // Canada
+  AU: '101452733', // Australia
+  IN: '102713980', // India
+  DE: '101282230', // Germany
+  FR: '105015875', // France
+};
+
+export interface FacetedSearchOptions {
+  page?: number;
+  countries?: string[];
+  geoUrns?: string[];
+  positions?: string[];
+  keywords?: string;
+  industryUrns?: string[];
+}
+
+export function resolveGeoUrns(countries?: string[], geoUrns?: string[]): string[] {
+  if (geoUrns && geoUrns.length > 0) return geoUrns;
+  if (countries && countries.length > 0) {
+    const urns = countries
+      .map((c) => LINKEDIN_COUNTRY_URN_MAP[c.toUpperCase()] ?? (c.match(/^\d+$/) ? c : null))
+      .filter((u): u is string => Boolean(u));
+    if (urns.length > 0) return urns;
+  }
+  return ['103644278', '101165590'];
+}
+
+/** Builds the faceted LinkedIn people search URL formatted with keywords, location URNs, industry filter, and page pagination. */
+export function buildFacetedLinkedinSearchUrl(
+  query: string,
+  options?: FacetedSearchOptions | number,
+): string {
+  const opts: FacetedSearchOptions =
+    typeof options === 'number' ? { page: options } : options ?? {};
+  const p = Math.max(1, opts.page ?? 1);
+
+  if (query.startsWith('http')) {
+    const urlObj = new URL(query);
+    urlObj.searchParams.set('page', String(p));
+    return urlObj.toString();
+  }
+
+  const geoUrns = resolveGeoUrns(opts.countries, opts.geoUrns);
+  const industryUrns = opts.industryUrns && opts.industryUrns.length > 0 ? opts.industryUrns : ['104'];
+
+  const rawKeywords = opts.keywords ?? query;
+  const positions = opts.positions && opts.positions.length > 0 ? opts.positions : [];
+
+  let fullQuery = rawKeywords;
+  if (positions.length > 0) {
+    const posStr = positions.length === 1 ? positions[0] : `(${positions.join(' OR ')})`;
+    if (!rawKeywords.toLowerCase().includes(positions[0].toLowerCase())) {
+      fullQuery = `${posStr} ${rawKeywords}`.trim();
+    }
+  }
+
+  const keywords = cleanLinkedinKeywords(fullQuery);
+  const geoParam = encodeURIComponent(JSON.stringify(geoUrns));
+  const industryParam = encodeURIComponent(JSON.stringify(industryUrns));
+
+  return `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(
+    keywords,
+  )}&origin=FACETED_SEARCH&geoUrn=${geoParam}&industry=${industryParam}&page=${p}&spellCorrectionEnabled=true&prioritizeMessage=false`;
+}
+
 export class OpenCliLinkedinSource {
   private readonly runner: OpenCliRunner;
   private readonly timeoutMs: number;
@@ -180,9 +248,8 @@ export class OpenCliLinkedinSource {
     this.waitMs = waitMs;
   }
 
-  async search(query: string): Promise<XrayCandidate[]> {
-    const cleanedQuery = cleanLinkedinKeywords(query);
-    const url = `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(cleanedQuery)}`;
+  async search(query: string, options?: FacetedSearchOptions | number): Promise<XrayCandidate[]> {
+    const url = buildFacetedLinkedinSearchUrl(query, options);
     let opened: string;
     try {
       opened = await this.runner(['browser', 'linkedin', 'open', url], { timeoutMs: this.timeoutMs });
@@ -215,3 +282,5 @@ export class OpenCliLinkedinSource {
     return markdown.trim() ? parseOpenCliLinkedinMarkdown(markdown) : [];
   }
 }
+
+

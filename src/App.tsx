@@ -18,7 +18,7 @@ export interface ProspectRow {
 }
 
 export function App() {
-  const [activeTab, setActiveTab] = useState<'roles' | 'upload' | 'pipeline' | 'review' | 'export' | 'engagement'>('roles');
+  const [activeTab, setActiveTab] = useState<'roles' | 'upload' | 'pipeline' | 'export' | 'engagement'>('pipeline');
   const [roleName, setRoleName] = useState('Staff Backend Engineer');
   const [criteriaJson, setCriteriaJson] = useState(
     JSON.stringify(
@@ -29,8 +29,6 @@ export function App() {
         geography: ['San Francisco', 'Remote'],
         excludedTitles: ['Agency Recruiter', 'HR Intern'],
         hardExclusions: ['Staffing Agency'],
-        qualificationThreshold: 80,
-        reviewThreshold: 50,
       },
       null,
       2
@@ -46,6 +44,7 @@ export function App() {
   const [queueActions, setQueueActions] = useState<any[]>([]);
   const [controls, setControls] = useState<any[]>([]);
   const [auditEvents, setAuditEvents] = useState<any[]>([]);
+  const [actionStatusByDraft, setActionStatusByDraft] = useState<Record<string, 'executing' | 'executed' | 'failed'>>({});
   const [actionAccountId, setActionAccountId] = useState('00000000-0000-0000-0000-000000000002');
   const [actionMode, setActionMode] = useState<'BROWSER' | 'SIMULATE' | 'MANUAL'>('BROWSER');
   const [selectedProspectId, setSelectedProspectId] = useState<string>('');
@@ -55,8 +54,14 @@ export function App() {
   const [newProspectLinkedinUrl, setNewProspectLinkedinUrl] = useState('');
   const [newProspectLocation, setNewProspectLocation] = useState('');
   const [discovering, setDiscovering] = useState(false);
+  const [selectedCountries, setSelectedCountries] = useState<string[]>(['US']);
+  const [selectedPositions, setSelectedPositions] = useState<string[]>(['Director']);
+  const [searchKeyword, setSearchKeyword] = useState<string>('recruitment');
+  const [searchPage, setSearchPage] = useState<number>(1);
   const [discoveryResult, setDiscoveryResult] = useState<{
     status: 'completed' | 'rate_limited' | 'failed';
+    page?: number;
+    nextPage?: number;
     discovered: number;
     uniqueIngested: number;
     duplicatesSkipped: number;
@@ -64,13 +69,31 @@ export function App() {
     reviewRequired: number;
     disqualified: number;
     retryAfter?: number;
+    campaign?: { id: string; name: string };
   } | null>(null);
   const [discoveryError, setDiscoveryError] = useState('');
+  const [campaignsList, setCampaignsList] = useState<Array<{ id: string; name: string; enrolledCount: number }>>([]);
+  const [selectedCampaignId, setSelectedCampaignId] = useState<string>('');
+  const [campaignDrafts, setCampaignDrafts] = useState<Record<string, any[]>>({});
 
-  async function refreshProspects() {
+  async function refreshCampaigns() {
+    try {
+      const res = await fetch('/api/campaigns');
+      if (res.ok) {
+        const data = await res.json();
+        setCampaignsList(Array.isArray(data) ? data : []);
+      }
+    } catch {
+      // Offline fallback seam
+    }
+  }
+
+  async function refreshProspects(cId?: string) {
     setProspectsState('loading');
     try {
-      const res = await fetch('/api/prospects');
+      const filterId = cId !== undefined ? cId : selectedCampaignId;
+      const url = filterId ? `/api/prospects?campaignId=${encodeURIComponent(filterId)}` : '/api/prospects';
+      const res = await fetch(url);
       if (!res.ok) {
         const body = await res.text();
         setProspectsState('error');
@@ -86,6 +109,50 @@ export function App() {
         const ready = list.find(p => p.currentStage === 'READY_FOR_CAMPAIGN');
         return ready ? ready.id : '';
       });
+      refreshCampaigns();
+      // If viewing a specific campaign, also fetch all drafts and map by prospectId
+      if (filterId && list.length > 0) {
+        try {
+          const draftRes = await fetch('/api/engagement/drafts?status=ALL');
+          if (draftRes.ok) {
+            const allDrafts: any[] = await draftRes.json();
+            const byProspect: Record<string, any[]> = {};
+            for (const d of allDrafts) {
+              const pid = d.prospectId || d.post?.prospectId;
+              if (!pid) continue;
+              if (!byProspect[pid]) byProspect[pid] = [];
+              byProspect[pid].push(d);
+            }
+            setCampaignDrafts(byProspect);
+
+            const missingDrafts = list.filter(p => !byProspect[p.id] || byProspect[p.id].length === 0);
+            if (missingDrafts.length > 0) {
+              Promise.all(missingDrafts.map(p => fetch('/api/engagement/scan', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ prospectId: p.id }),
+              }))).then(async () => {
+                const reRes = await fetch('/api/engagement/drafts?status=ALL');
+                if (reRes.ok) {
+                  const updatedDrafts: any[] = await reRes.json();
+                  const updatedByProspect: Record<string, any[]> = {};
+                  for (const d of updatedDrafts) {
+                    const pid = d.prospectId || d.post?.prospectId;
+                    if (!pid) continue;
+                    if (!updatedByProspect[pid]) updatedByProspect[pid] = [];
+                    updatedByProspect[pid].push(d);
+                  }
+                  setCampaignDrafts(updatedByProspect);
+                }
+              }).catch(() => {});
+            }
+          }
+        } catch {
+          // drafts fetch is best-effort
+        }
+      } else if (!filterId) {
+        setCampaignDrafts({});
+      }
     } catch (e: any) {
       setProspectsState('error');
       setStatusMessage(`Prospects unavailable: ${e.message}`);
@@ -119,10 +186,25 @@ export function App() {
       refreshEngagement();
       refreshProspects();
     }
-    if (activeTab === 'pipeline' || activeTab === 'review') {
+    if (activeTab === 'pipeline') {
       refreshProspects();
     }
   }, [activeTab]);
+
+  async function refreshDiscoveryState() {
+    try {
+      const res = await fetch('/api/prospects/discovery-state');
+      if (res.ok) {
+        const data = await res.json();
+        if (typeof data.nextPage === 'number') setSearchPage(data.nextPage);
+        if (Array.isArray(data.countries) && data.countries.length > 0) setSelectedCountries(data.countries);
+        if (Array.isArray(data.positions) && data.positions.length > 0) setSelectedPositions(data.positions);
+        if (typeof data.keyword === 'string' && data.keyword.trim()) setSearchKeyword(data.keyword);
+      }
+    } catch {
+      // Server offline or unavailable seam
+    }
+  }
 
   useEffect(() => {
     fetch('/health')
@@ -134,6 +216,7 @@ export function App() {
       .catch(() => {
         setStatusMessage('API unavailable: cannot reach server. No local fallback data is shown.');
       });
+    refreshDiscoveryState();
   }, []);
 
   const handleCreateRole = async () => {
@@ -211,25 +294,6 @@ export function App() {
     }
   };
 
-  const handleReviewDecision = async (prospectId: string, decision: 'APPROVED' | 'REJECTED') => {
-    try {
-      const response = await fetch(`/api/prospects/${prospectId}/review`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ decision }),
-      });
-      if (!response.ok) {
-        setStatusMessage(`Review refused: ${await response.text()}`);
-        return;
-      }
-      const updated = await response.json();
-      setProspects(prev => prev.map(c => c.id === prospectId ? { ...c, currentStage: updated.currentStage } : c));
-      setStatusMessage(`Review ${decision.toLowerCase()} on the server.`);
-    } catch (error: any) {
-      setStatusMessage(`Review failed: ${error.message}`);
-    }
-  };
-
   const handleDeleteProspect = async (prospect: ProspectRow) => {
     if (!window.confirm(`Delete ${prospect.name} and all associated engagement data?`)) return;
     try {
@@ -248,7 +312,6 @@ export function App() {
   const qualifiedCount = prospects.filter(
     c => c.currentStage === 'EVALUATED' || c.currentStage === 'READY_FOR_CAMPAIGN'
   ).length;
-  const reviewCount = prospects.filter(c => c.currentStage === 'REQUIRES_REVIEW').length;
   const rejectedCount = prospects.filter(
     c => c.currentStage === 'REJECTED' || c.currentStage === 'FILTERED_OUT'
   ).length;
@@ -327,7 +390,6 @@ export function App() {
       setStatusMessage(`Add prospect failed: ${e.message}`);
     }
   };
-
   const handleDiscoverProspects = async () => {
     if (discovering) return;
     setDiscovering(true);
@@ -338,7 +400,12 @@ export function App() {
       const res = await fetch('/api/prospects/discover', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({}),
+        body: JSON.stringify({
+          countries: selectedCountries,
+          positions: selectedPositions,
+          keyword: searchKeyword,
+          page: searchPage,
+        }),
       });
       const report = await res.json();
       if (!res.ok || report.status !== 'completed') {
@@ -359,24 +426,61 @@ export function App() {
         setStatusMessage(`Discovery did not run. Prior prospect state is preserved.${retryMessage}`);
         return;
       }
+      const completedPage = report.page ?? searchPage;
+      const nextPage = report.nextPage ?? (completedPage + 1);
+      const createdCampaign = report.campaign as { id: string; name: string } | null | undefined;
       setDiscoveryResult({
         status: 'completed',
+        page: completedPage,
+        nextPage,
         discovered: report.discovered ?? 0,
         uniqueIngested: report.uniqueIngested ?? 0,
         duplicatesSkipped: report.duplicatesSkipped ?? 0,
         qualified: report.qualified ?? 0,
         reviewRequired: report.reviewRequired ?? 0,
         disqualified: report.disqualified ?? 0,
+        campaign: createdCampaign ?? undefined,
       });
+      setSearchPage(nextPage);
       setStatusMessage(
-        `Discovery complete: ${report.discovered ?? 0} found, ${report.uniqueIngested ?? 0} ingested, ${report.duplicatesSkipped ?? 0} duplicates skipped. Refreshing pipeline…`
+        `Discovery complete for Page ${completedPage}: ${report.discovered ?? 0} found, ${report.uniqueIngested ?? 0} ingested. Auto-advanced to Page ${nextPage} for next run.`
       );
-      await refreshProspects();
+      // Auto-navigate to the created campaign in Pipeline tab
+      if (createdCampaign?.id) {
+        await refreshCampaigns();
+        setSelectedCampaignId(createdCampaign.id);
+        setActiveTab('pipeline');
+        await refreshProspects(createdCampaign.id);
+      } else {
+        await refreshProspects();
+      }
     } catch (e: any) {
       setDiscoveryError(`Discovery failed: ${e.message}`);
       setStatusMessage(`Discovery failed: ${e.message}`);
     } finally {
       setDiscovering(false);
+    }
+  };
+
+  const handleScanProspect = async (prospectId: string) => {
+    const target = prospects.find(p => p.id === prospectId);
+    setStatusMessage(`Scanning ${target?.name ?? prospectId} for recent posts...`);
+    try {
+      const res = await fetch('/api/engagement/scan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prospectId })
+      });
+      if (!res.ok) {
+        setStatusMessage(`Scan refused (${res.status}): ${await res.text()}`);
+        return;
+      }
+      const data = await res.json();
+      setStatusMessage(`Scan complete: ${data.postsFound} posts found, ${data.draftsCreated} drafts created.`);
+      // Re-fetch drafts for this campaign
+      await refreshProspects(selectedCampaignId || undefined);
+    } catch (e: any) {
+      setStatusMessage(`Scan failed: ${e.message}`);
     }
   };
 
@@ -443,7 +547,7 @@ export function App() {
     }
   };
 
-  const handleRequestAction = async (draftId: string, actionType: 'LIKE' | 'COMMENT') => {
+  const handleRequestAction = async (draftId: string, actionType: 'LIKE' | 'COMMENT', autoProcess = true) => {
     try {
       setStatusMessage(`Requesting & executing ${actionType} (${actionMode})…`);
       const response = await fetch(`/api/engagement/recommendations/${draftId}/actions`, {
@@ -459,11 +563,60 @@ export function App() {
       setStatusMessage(`Action queued. Now dispatching executor (${actionMode})…`);
       await refreshEngagement();
 
-      // Automatically dispatch queue execution
-      await handleProcessQueue();
+      if (autoProcess) {
+        await handleProcessQueue();
+      }
     } catch (e: any) {
       setStatusMessage(`Action request failed: ${e.message}`);
     }
+  };
+
+  const handleApproveCommentWithLike = async (commentDraft: any, draftsForProspect: any[]) => {
+    if (commentDraft.status === 'APPROVED') return;
+    try {
+      setStatusMessage('Approving comment & like...');
+      const matchingLike = draftsForProspect.find(d => d.actionType === 'LIKE' && (d.postId === commentDraft.postId || d.post?.id === commentDraft.post?.id));
+      await handleDraftDecision(commentDraft.id, 'APPROVED');
+      if (matchingLike) {
+        await handleDraftDecision(matchingLike.id, 'APPROVED');
+      }
+      setStatusMessage(`✓ Approved! The comment & like are ready to execute.`);
+      await refreshProspects(selectedCampaignId || undefined);
+    } catch (e: any) {
+      setStatusMessage(`Approval failed: ${e.message}`);
+    }
+  };
+
+  const handleExecuteCommentWithLike = async (commentDraft: any, draftsForProspect: any[]) => {
+    if (actionStatusByDraft[commentDraft.id] === 'executing' || actionStatusByDraft[commentDraft.id] === 'executed') {
+      return;
+    }
+    setActionStatusByDraft(prev => ({ ...prev, [commentDraft.id]: 'executing' }));
+    setStatusMessage(`Executing like and comment for ${commentDraft.post?.authorName ?? 'prospect'} (${actionMode})...`);
+    try {
+      const matchingLike = draftsForProspect.find(d => d.actionType === 'LIKE' && (d.postId === commentDraft.postId || d.post?.id === commentDraft.post?.id));
+      if (matchingLike) {
+        await handleDraftDecision(matchingLike.id, 'APPROVED');
+        await handleRequestAction(matchingLike.id, 'LIKE', false);
+      }
+      await handleDraftDecision(commentDraft.id, 'APPROVED');
+      await handleRequestAction(commentDraft.id, 'COMMENT', true);
+      setActionStatusByDraft(prev => ({ ...prev, [commentDraft.id]: 'executed' }));
+      setStatusMessage(`🚀 Executed! Like and comment dispatched to LinkedIn.`);
+      await refreshProspects(selectedCampaignId || undefined);
+    } catch (e: any) {
+      setActionStatusByDraft(prev => ({ ...prev, [commentDraft.id]: 'failed' }));
+      setStatusMessage(`Execution failed: ${e.message}`);
+    }
+  };
+
+  const handleSkipCommentWithLike = async (commentDraft: any, draftsForProspect: any[]) => {
+    const matchingLike = draftsForProspect.find(d => d.actionType === 'LIKE' && (d.postId === commentDraft.postId || d.post?.id === commentDraft.post?.id));
+    await handleDraftDecision(commentDraft.id, 'SKIPPED');
+    if (matchingLike) {
+      await handleDraftDecision(matchingLike.id, 'SKIPPED');
+    }
+    await refreshProspects(selectedCampaignId || undefined);
   };
 
   const handleKillSwitch = async (accountId: string, actionType: string, active: boolean) => {
@@ -512,12 +665,6 @@ export function App() {
             📊 Prospect Pipeline
           </button>
           <button
-            className={`nav-item ${activeTab === 'review' ? 'active' : ''}`}
-            onClick={() => setActiveTab('review')}
-          >
-            👤 Review Queue ({reviewCount})
-          </button>
-          <button
             className={`nav-item ${activeTab === 'export' ? 'active' : ''}`}
             onClick={() => setActiveTab('export')}
           >
@@ -560,9 +707,9 @@ export function App() {
             <small>Approved for Outreach</small>
           </div>
           <div className="metric">
-            <span>REQUIRES REVIEW</span>
-            <strong>{reviewCount}</strong>
-            <small>Recruiter Borderline Queue</small>
+            <span>CAMPAIGNS</span>
+            <strong>{campaignsList.length}</strong>
+            <small>Discovery Runs</small>
           </div>
           <div className="metric">
             <span>DISQUALIFIED</span>
@@ -617,34 +764,11 @@ export function App() {
             <div className="panel-heading">
               <div>
                 <span className="chip">STEP 2</span>
-                <h3>Import Prospect CSV</h3>
+                <h3>Import & Discover Prospects</h3>
               </div>
             </div>
-            <p>
-              Paste or drop prospect CSV exports. Rows are validated, LinkedIn URLs normalized, and bad
-              rows isolated automatically.
-            </p>
-            <textarea
-              className="criteria"
-              style={{ height: 160 }}
-              placeholder="Paste CSV contents here (name, title, company, location, linkedinUrl, skills)..."
-              value={csvText}
-              onChange={e => setCsvText(e.target.value)}
-            />
-            <button className="primary" onClick={handleUploadCsv}>
-              Process Prospect Batch ➔
-            </button>
-          </div>
-        )}
-
-        {/* TAB CONTENT: PIPELINE */}
-        {activeTab === 'pipeline' && (
-          <div className="panel table-panel single-column">
-            <div className="panel-heading">
-              <h3>Prospect Qualification Pipeline</h3>
-              <span className="chip">{prospects.length} PROSPECTS · {prospectsState}</span>
-            </div>
-            <div className="panel" style={{ marginBottom: '1rem', border: '2px solid #1976d2' }}>
+            
+            <div className="panel" style={{ marginBottom: '2rem', border: '2px solid #1976d2' }}>
               <div className="panel-heading">
                 <h3>Automated Prospect Discovery</h3>
                 <span className="chip">OPENCLI LINKEDIN</span>
@@ -653,6 +777,129 @@ export function App() {
                 Automated prospect discovery via OpenCLI LinkedIn search for boutique recruitment agency founders.
                 New matches are qualified through the server pipeline automatically.
               </p>
+
+              {/* DISCOVERY PARAMETERS FORM */}
+              <div style={{ margin: '1rem 0', padding: '1rem', background: '#f7faf5', border: '1px solid #d9e2d9', borderRadius: '8px' }}>
+                <h4 style={{ margin: '0 0 0.8rem', fontSize: '14px', color: '#18342e' }}>Discovery Filters & Search Parameters</h4>
+                
+                {/* Countries (Multi-select) */}
+                <div style={{ marginBottom: '1rem' }}>
+                  <label style={{ fontSize: '12px', fontWeight: '700', marginBottom: '0.4rem', display: 'block', color: '#45534d' }}>
+                    Target Countries (Multi-select — Default: US)
+                  </label>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                    {[
+                      { id: 'US', label: '🇺🇸 United States' },
+                      { id: 'UK', label: '🇬🇧 United Kingdom' },
+                      { id: 'CA', label: '🇨🇦 Canada' },
+                      { id: 'AU', label: '🇦🇺 Australia' },
+                      { id: 'IN', label: '🇮🇳 India' },
+                      { id: 'DE', label: '🇩🇪 Germany' },
+                      { id: 'FR', label: '🇫🇷 France' },
+                    ].map((country) => {
+                      const checked = selectedCountries.includes(country.id);
+                      return (
+                        <button
+                          key={country.id}
+                          type="button"
+                          onClick={() => {
+                            if (checked) {
+                              if (selectedCountries.length > 1) {
+                                setSelectedCountries(selectedCountries.filter((c) => c !== country.id));
+                              }
+                            } else {
+                              setSelectedCountries([...selectedCountries, country.id]);
+                            }
+                          }}
+                          style={{
+                            background: checked ? '#18342e' : '#fff',
+                            color: checked ? '#fff' : '#18342e',
+                            border: `1px solid ${checked ? '#18342e' : '#b9c9bd'}`,
+                            padding: '6px 12px',
+                            borderRadius: '16px',
+                            fontSize: '12px',
+                            fontWeight: '600',
+                            cursor: 'pointer'
+                          }}
+                        >
+                          {country.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', gap: '1rem' }}>
+                  {/* Job Positions (Multi-select) */}
+                  <div style={{ flex: 2 }}>
+                    <label style={{ fontSize: '12px', fontWeight: '700', marginBottom: '0.3rem', display: 'block', color: '#45534d' }}>
+                      Target Roles
+                    </label>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                      {['Founder', 'Owner', 'Partner', 'Director', 'CEO'].map((pos) => {
+                        const checked = selectedPositions.includes(pos);
+                        return (
+                          <button
+                            key={pos}
+                            type="button"
+                            onClick={() => {
+                              if (checked) {
+                                if (selectedPositions.length > 1) {
+                                  setSelectedPositions(selectedPositions.filter((p) => p !== pos));
+                                }
+                              } else {
+                                setSelectedPositions([...selectedPositions, pos]);
+                              }
+                            }}
+                            style={{
+                              background: checked ? '#e5f0c8' : '#fff',
+                              color: checked ? '#18342e' : '#55655d',
+                              border: `1px solid ${checked ? '#a5c07b' : '#d9e2d9'}`,
+                              padding: '4px 10px',
+                              borderRadius: '4px',
+                              fontSize: '11px',
+                              fontWeight: '600',
+                              cursor: 'pointer'
+                            }}
+                          >
+                            {pos}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Industry Keyword */}
+                  <div style={{ flex: 1 }}>
+                    <label style={{ fontSize: '12px', fontWeight: '700', marginBottom: '0.3rem', display: 'block', color: '#45534d' }}>
+                      Industry Keyword
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="e.g. recruitment"
+                      value={searchKeyword}
+                      onChange={(e) => setSearchKeyword(e.target.value)}
+                      style={{ width: '100%', padding: '8px 12px' }}
+                    />
+                  </div>
+
+                  {/* Page Override */}
+                  <div style={{ width: '80px' }}>
+                    <label style={{ fontSize: '12px', fontWeight: '700', marginBottom: '0.3rem', display: 'block', color: '#45534d' }}>
+                      Page Number
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={100}
+                      value={searchPage}
+                      onChange={(e) => setSearchPage(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                      style={{ width: '100%', padding: '8px 12px' }}
+                    />
+                  </div>
+                </div>
+              </div>
+
               <button className="primary" onClick={handleDiscoverProspects} disabled={discovering}>
                 {discovering ? 'Discovering…' : 'Discover ICP Prospects ➔'}
               </button>
@@ -662,10 +909,12 @@ export function App() {
                 </div>
               )}
               {!discovering && discoveryResult && (
-                <div className="empty" style={{ marginTop: '0.5rem' }}>
-                  Discovery complete: {discoveryResult.discovered} found · {discoveryResult.uniqueIngested} ingested ·{' '}
-                  {discoveryResult.duplicatesSkipped} duplicates skipped · {discoveryResult.qualified} qualified ·{' '}
-                  {discoveryResult.reviewRequired} for review · {discoveryResult.disqualified} disqualified.
+                <div className="empty" style={{ marginTop: '0.5rem', textAlign: 'left', padding: '12px 16px', background: '#e5f0c8', borderRadius: '6px', color: '#3d5220' }}>
+                  <strong>Discovery Complete (Page {discoveryResult.page ?? searchPage})</strong>: {discoveryResult.discovered} found · {discoveryResult.uniqueIngested} ingested & enrolled ·{' '}
+                  {discoveryResult.duplicatesSkipped} duplicates skipped · {discoveryResult.disqualified} disqualified.
+                  <div style={{ marginTop: '4px', fontSize: '12px', fontWeight: '600', color: '#2c5147' }}>
+                    ➔ Auto-advanced to Page {discoveryResult.nextPage ?? (searchPage + 1)} for next run.
+                  </div>
                 </div>
               )}
               {!discovering && discoveryError && (
@@ -674,9 +923,10 @@ export function App() {
                 </div>
               )}
             </div>
-            <div className="panel" style={{ marginBottom: '1rem' }}>
+
+            <div className="panel" style={{ marginBottom: '2rem' }}>
               <div className="panel-heading">
-                <h3>Add Prospect</h3>
+                <h3>Add Prospect Manually</h3>
                 <span className="chip">MANUAL ADD</span>
               </div>
               <p>
@@ -734,99 +984,280 @@ export function App() {
                 Add Prospect ➔
               </button>
             </div>
-            {prospectsState === 'loading' && <div className="empty">Loading prospects from the server…</div>}
-            {prospectsState === 'error' && <div className="empty">Prospects unavailable. Prior server state is preserved; no local fallback is shown.</div>}
-            {prospectsState === 'empty' && <div className="empty">No prospects on the server yet. Use “Add Prospect” above or import a CSV on the Import Prospects tab to get started.</div>}
-            {prospectsState === 'ready' && (
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>PROSPECT</th>
-                    <th>ROLE & COMPANY</th>
-                    <th>LOCATION</th>
-                    <th>STAGE</th>
-                    <th>REASONING / SCORE</th>
-                    <th>ACTION</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {prospects.map(c => (
-                    <tr key={c.id}>
-                      <td>
-                        <strong>{c.name}</strong>
-                        <a href={c.linkedinUrl} target="_blank" rel="noopener noreferrer">View LinkedIn Profile ↗</a>
-                      </td>
-                      <td>
-                        <strong>{c.title}</strong>
-                        <small>{c.company}</small>
-                      </td>
-                      <td>{c.location}</td>
-                      <td>
-                        <span className={`stage ${c.currentStage.toLowerCase()}`}>
-                          {c.currentStage}
-                        </span>
-                      </td>
-                      <td>{c.customAttributes?.reasoning || 'Evaluated against job spec'}</td>
-                      <td><button className="reject" onClick={() => handleDeleteProspect(c)}>Delete</button></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+
+            <div className="panel">
+              <div className="panel-heading">
+                <h3>Import Prospect CSV</h3>
+                <span className="chip">CSV UPLOAD</span>
+              </div>
+              <p>
+                Paste or drop prospect CSV exports. Rows are validated, LinkedIn URLs normalized, and bad
+                rows isolated automatically.
+              </p>
+              <textarea
+                className="criteria"
+                style={{ height: 160 }}
+                placeholder="Paste CSV contents here (name, title, company, location, linkedinUrl, skills)..."
+                value={csvText}
+                onChange={e => setCsvText(e.target.value)}
+              />
+              <button className="primary" onClick={handleUploadCsv}>
+                Process Prospect Batch ➔
+              </button>
             </div>
-            )}
           </div>
         )}
 
-        {/* TAB CONTENT: REVIEW */}
-        {activeTab === 'review' && (
-          <div className="panel single-column">
+        {/* TAB CONTENT: PIPELINE */}
+        {activeTab === 'pipeline' && (
+          <div className="panel table-panel single-column">
             <div className="panel-heading">
-              <h3>Borderline Prospect Review Queue</h3>
-              <span className="chip">{reviewCount} PENDING</span>
+              <h3>Prospect Qualification Pipeline</h3>
+              <span className="chip">{selectedCampaignId ? `${prospects.length} PROSPECTS` : `${campaignsList.length} CAMPAIGNS`}</span>
             </div>
-            {reviewCount === 0 ? (
-              <div className="empty">No prospects currently require manual review.</div>
+
+
+            {!selectedCampaignId ? (
+              <div style={{ marginBottom: '2rem' }}>
+                <h4 style={{ margin: '0 0 1rem', color: '#18342e' }}>Select a Campaign</h4>
+                <div style={{ display: 'grid', gap: '1rem' }}>
+                  {campaignsList.length === 0 ? (
+                    <div className="empty">No campaigns available. Go to 'Import Prospects' to discover leads.</div>
+                  ) : (
+                    campaignsList.map(c => (
+                      <div key={c.id} style={{ padding: '1rem', border: '1px solid #d9e2d9', borderRadius: '8px', background: '#fff', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div>
+                          <h4 style={{ margin: '0 0 0.5rem', color: '#18342e' }}>{c.name}</h4>
+                          <span className="chip">{c.enrolledCount} Leads</span>
+                        </div>
+                        <button
+                          className="primary"
+                          onClick={() => {
+                            setSelectedCampaignId(c.id);
+                            refreshProspects(c.id);
+                          }}
+                        >
+                          View Prospects ➔
+                        </button>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
             ) : (
-              <div className="review-list">
-                {prospects
-                  .filter(c => c.currentStage === 'REQUIRES_REVIEW')
-                  .map(c => (
-                    <div key={c.id} className="review-card">
-                      <div>
-                        <span className="chip">SCORE: {c.customAttributes?.score ?? 72}</span>
-                        <h3>
-                          <a href={c.linkedinUrl} target="_blank" rel="noreferrer">
-                            {c.customAttributes?.name ?? c.linkedinUrl}
-                          </a>
-                        </h3>
-                        <p>
-                          <strong>{c.customAttributes?.title ?? '—'}</strong>
-                          {c.customAttributes?.company ? ` at ${c.customAttributes.company}` : ''}
-                          {c.customAttributes?.location ? ` (${c.customAttributes.location})` : ''}
-                        </p>
-                        <small>{c.customAttributes?.reasoning}</small>
+              <div>
+                <div style={{ marginBottom: '1.2rem', padding: '12px 16px', background: '#eef1ec', border: '1px solid #d9e2d9', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '15px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1 }}>
+                    <span style={{ fontSize: '12px', fontWeight: '800', color: '#18342e', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                      🎯 Active Campaign: {campaignsList.find(c => c.id === selectedCampaignId)?.name || 'Unknown Campaign'}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedCampaignId('');
+                      refreshProspects('');
+                    }}
+                    style={{ border: '0', background: '#18342e', color: '#fff', padding: '6px 12px', borderRadius: '6px', fontSize: '11px', fontWeight: '700', cursor: 'pointer' }}
+                  >
+                    ← Back to Campaigns
+                  </button>
+                </div>
+
+                {prospectsState === 'loading' && <div className="empty">Loading prospects from the server…</div>}
+                {prospectsState === 'error' && <div className="empty">Prospects unavailable. Prior server state is preserved; no local fallback is shown.</div>}
+                {prospectsState === 'empty' && !selectedCampaignId && <div className="empty">No prospects on the server yet. Use "Add Prospect" above or import a CSV on the Import Prospects tab to get started.</div>}
+                {prospectsState === 'empty' && selectedCampaignId && <div className="empty">No prospects found in this campaign.</div>}
+                {prospectsState === 'ready' && (
+              <div style={{ display: 'grid', gap: '1rem' }}>
+                {prospects.map(c => {
+                  const draftsForProspect = campaignDrafts[c.id] ?? [];
+                  const commentDrafts = draftsForProspect.filter(d => d.actionType === 'COMMENT' && d.status !== 'SKIPPED' && d.status !== 'REJECTED');
+                  const pendingCount = commentDrafts.filter(d => d.status === 'PENDING_REVIEW' || d.status === 'PENDING').length;
+                  const approvedCount = commentDrafts.filter(d => d.status === 'APPROVED' && actionStatusByDraft[d.id] !== 'executed').length;
+
+                  return (
+                    <div key={c.id} style={{ border: '1px solid #d9e2d9', borderRadius: '10px', background: '#fff', overflow: 'hidden' }}>
+                      {/* Prospect Header */}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', padding: '1rem 1.25rem', borderBottom: commentDrafts.length > 0 ? '1px solid #e8f0e8' : 'none' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', flex: 1 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+                            <strong style={{ fontSize: '15px', color: '#18342e' }}>{c.name}</strong>
+                            <span className={`stage ${c.currentStage.toLowerCase()}`}>{c.currentStage}</span>
+                            {pendingCount > 0 && (
+                              <span style={{ background: '#fff3cd', color: '#856404', border: '1px solid #ffc107', borderRadius: '4px', fontSize: '11px', fontWeight: '700', padding: '2px 8px' }}>
+                                💬 {pendingCount} comment{pendingCount > 1 ? 's' : ''} to review
+                              </span>
+                            )}
+                            {approvedCount > 0 && (
+                              <span style={{ background: '#e8f5e9', color: '#2e7d32', border: '1px solid #a5d6a7', borderRadius: '4px', fontSize: '11px', fontWeight: '700', padding: '2px 8px' }}>
+                                🚀 {approvedCount} approved & ready to execute
+                              </span>
+                            )}
+                          </div>
+                          <span style={{ fontSize: '13px', color: '#45534d' }}>{c.title}{c.company ? ` · ${c.company}` : ''}{c.location ? ` · ${c.location}` : ''}</span>
+                          <a href={c.linkedinUrl} target="_blank" rel="noopener noreferrer" style={{ fontSize: '12px', color: '#1976d2' }}>View LinkedIn ↗</a>
+                        </div>
+                        <div style={{ display: 'flex', gap: '0.5rem', flexShrink: 0 }}>
+                          {selectedCampaignId && draftsForProspect.length === 0 && (
+                            <button
+                              style={{ border: '1px solid #b9c9bd', background: '#f7faf5', color: '#18342e', padding: '5px 12px', borderRadius: '6px', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}
+                              onClick={() => handleScanProspect(c.id)}
+                            >
+                              🔍 Scan Posts
+                            </button>
+                          )}
+                          <button className="reject" onClick={() => handleDeleteProspect(c)}>Delete</button>
+                        </div>
                       </div>
-                      <div className="review-actions">
-                        <button
-                          className="approve"
-                          onClick={() => handleReviewDecision(c.id, 'APPROVED')}
-                        >
-                          ✓ Approve for Campaign
-                        </button>
-                        <button
-                          className="reject"
-                          onClick={() => handleReviewDecision(c.id, 'REJECTED')}
-                        >
-                          ✕ Disqualify
-                        </button>
-                      </div>
+
+                      {/* Draft Comments */}
+                      {commentDrafts.length > 0 && (
+                        <div style={{ padding: '0.75rem 1.25rem', background: '#fafcf8', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                          {commentDrafts.map(draft => {
+                            const isApproved = draft.status === 'APPROVED';
+                            const execState = actionStatusByDraft[draft.id];
+                            const isExecuting = execState === 'executing';
+                            const isExecuted = execState === 'executed';
+
+                            return (
+                              <div
+                                key={draft.id}
+                                style={{
+                                  border: isExecuted ? '1px solid #c8e6c9' : isApproved ? '1px solid #ffe082' : '1px solid #e0ead0',
+                                  background: isExecuted ? '#f9fdf9' : isApproved ? '#fffdf7' : '#fff',
+                                  borderRadius: '8px',
+                                  overflow: 'hidden',
+                                }}
+                              >
+                                {/* Post context */}
+                                {draft.post && (
+                                  <div style={{ padding: '0.6rem 0.9rem', background: '#f3f7f0', borderBottom: '1px solid #e0ead0' }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px', flexWrap: 'wrap', gap: '6px' }}>
+                                      <small style={{ color: '#6b7e73', fontWeight: '600', fontSize: '11px' }}>
+                                        POST BY {(draft.post.authorName ?? 'Unknown').toUpperCase()} · {draft.post.sourceType ?? ''}
+                                      </small>
+                                      {draft.post.postUrl && (
+                                        <a
+                                          href={draft.post.postUrl}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          style={{ fontSize: '11px', color: '#1976d2', textDecoration: 'none', fontWeight: '700' }}
+                                        >
+                                          🔗 View Post on LinkedIn ↗
+                                        </a>
+                                      )}
+                                    </div>
+                                    <em style={{ fontSize: '13px', color: '#33453e', lineHeight: '1.5', display: 'block' }}>"{draft.post.postText}"</em>
+                                  </div>
+                                )}
+                                {/* Draft comment */}
+                                <div style={{ padding: '0.6rem 0.9rem' }}>
+                                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
+                                    <div>
+                                      {isExecuted ? (
+                                        <span style={{ fontSize: '11px', fontWeight: '800', color: '#2e7d32', background: '#e8f5e9', border: '1px solid #a5d6a7', padding: '2px 8px', borderRadius: '4px' }}>
+                                          🚀 EXECUTED (Published to LinkedIn)
+                                        </span>
+                                      ) : isExecuting ? (
+                                        <span style={{ fontSize: '11px', fontWeight: '800', color: '#1565c0', background: '#e3f2fd', border: '1px solid #90caf9', padding: '2px 8px', borderRadius: '4px' }}>
+                                          ⏳ EXECUTING ON LINKEDIN...
+                                        </span>
+                                      ) : isApproved ? (
+                                        <span style={{ fontSize: '11px', fontWeight: '800', color: '#b78103', background: '#fff8e1', border: '1px solid #ffe082', padding: '2px 8px', borderRadius: '4px' }}>
+                                          ✓ APPROVED — Ready to Execute 🚀
+                                        </span>
+                                      ) : (
+                                        <small style={{ color: '#1976d2', fontWeight: '700', fontSize: '11px' }}>
+                                          💬 COMMENT DRAFT · {draft.status}
+                                        </small>
+                                      )}
+                                    </div>
+                                    <span style={{ fontSize: '11px', color: '#2e7d32', fontWeight: '600', background: '#e8f5e9', padding: '2px 6px', borderRadius: '4px' }}>
+                                      👍 Like included automatically
+                                    </span>
+                                  </div>
+
+                                  <p style={{ margin: '0 0 0.75rem', fontSize: '14px', color: '#18342e', lineHeight: '1.6', fontWeight: '500' }}>
+                                    {draft.commentText}
+                                  </p>
+
+                                  {/* Call to action guidance when approved */}
+                                  {isApproved && !isExecuted && !isExecuting && (
+                                    <div style={{ marginBottom: '0.75rem', padding: '6px 10px', background: '#fff9c4', borderRadius: '6px', fontSize: '12px', color: '#7f6000', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                      <span>👉 Comment & Like are approved! Click <strong>"Execute"</strong> below to publish to LinkedIn.</span>
+                                    </div>
+                                  )}
+
+                                  {isExecuted && (
+                                    <div style={{ marginBottom: '0.75rem', padding: '6px 10px', background: '#e8f5e9', borderRadius: '6px', fontSize: '12px', color: '#2e7d32', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                      <span>✓ Action completed! The post has been liked and the comment published.</span>
+                                    </div>
+                                  )}
+
+                                  <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                                    <button
+                                      className={isApproved || isExecuted ? '' : 'approve'}
+                                      disabled={isApproved || isExecuting || isExecuted}
+                                      style={isApproved || isExecuted ? {
+                                        background: '#f1f8e9',
+                                        color: '#33691e',
+                                        border: '1px solid #c5e1a5',
+                                        padding: '5px 12px',
+                                        borderRadius: '6px',
+                                        fontSize: '12px',
+                                        fontWeight: '700',
+                                        cursor: 'not-allowed',
+                                        opacity: 0.9,
+                                      } : undefined}
+                                      onClick={() => handleApproveCommentWithLike(draft, draftsForProspect)}
+                                    >
+                                      {isApproved || isExecuted ? '✓ Approved' : '✓ Approve (Comment + Like)'}
+                                    </button>
+
+                                    <button
+                                      className="primary"
+                                      disabled={isExecuting || isExecuted}
+                                      style={{
+                                        padding: '6px 14px',
+                                        fontSize: '12px',
+                                        fontWeight: '700',
+                                        cursor: isExecuting || isExecuted ? 'not-allowed' : 'pointer',
+                                        background: isExecuted ? '#2e7d32' : isApproved ? '#0d47a1' : undefined,
+                                        opacity: isExecuted ? 0.85 : 1,
+                                      }}
+                                      onClick={() => handleExecuteCommentWithLike(draft, draftsForProspect)}
+                                    >
+                                      {isExecuted ? '✓ Executed (Published)' : isExecuting ? '⏳ Executing...' : isApproved ? `🚀 Execute Now (${actionMode})` : `🚀 Execute (${actionMode})`}
+                                    </button>
+
+                                    {!isExecuted && (
+                                      <button
+                                        className="reject"
+                                        disabled={isExecuting}
+                                        onClick={() => handleSkipCommentWithLike(draft, draftsForProspect)}
+                                      >
+                                        ✕ Skip
+                                      </button>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
                     </div>
-                  ))}
+                  );
+                })}
+              </div>
+            )}
               </div>
             )}
           </div>
         )}
+
+
 
         {/* TAB CONTENT: EXPORT */}
         {activeTab === 'export' && (
@@ -848,185 +1279,74 @@ export function App() {
 
         {/* TAB CONTENT: ENGAGEMENT */}
         {activeTab === 'engagement' && (() => {
-          const selectedProspect = prospects.find(p => p.id === selectedProspectId);
-          const filteredDrafts = selectedProspectId
-            ? drafts.filter(draft => draft.prospectId === selectedProspectId || draft.post?.prospectId === selectedProspectId)
-            : drafts;
-          const filteredQueueActions = selectedProspectId
-            ? queueActions.filter(action => action.prospectId === selectedProspectId)
-            : queueActions;
-
           return (
-          <div className="content-grid">
-            <div className="panel intro-panel">
-              <span className="chip">ENGAGEMENT</span>
-              <h2>Social Selling & Engagement</h2>
-              <p>
-                Scan your approved prospects for recent LinkedIn activity. Review evidence-grounded drafts,
-                approve an exact revision, then request SIMULATE or MANUAL execution. Browser execution stays
-                disabled unless the server enables it. Every result below is server truth: pending, simulated,
-                manual-confirmed, browser-executed, verified, uncertain, refused, or failed.
-              </p>
-              <div style={{ marginTop: '1rem', padding: '0.75rem', border: '2px solid #1976d2', borderRadius: '8px', background: '#f3f8ff' }}>
-                <h3 style={{ margin: '0 0 0.5rem' }}>Prospect Selector</h3>
-                {prospectsState === 'loading' && <div className="empty">Loading prospects…</div>}
-                {prospectsState === 'error' && <div className="empty">Prospects unavailable. Prior server state is preserved.</div>}
-                {prospects.length === 0 && prospectsState !== 'loading' ? (
-                  <div className="empty">
-                    No prospects yet. Go to the Prospect Pipeline tab and use “Add Prospect” to add your first LinkedIn profile, then return here to select and scan.
-                  </div>
-                ) : (
-                  <>
-                    <label>
-                      Choose a prospect to scan
-                      <select
-                        value={selectedProspectId}
-                        onChange={e => setSelectedProspectId(e.target.value)}
-                        style={{ marginTop: '0.25rem', width: '100%' }}
-                      >
-                        <option value="">— Select a prospect —</option>
-                        {prospects.map(p => (
-                          <option key={p.id} value={p.id}>
-                           {p.customAttributes?.name ?? p.linkedinUrl} — {p.customAttributes?.company ?? ''} — {p.customAttributes?.title ?? ''} [{p.currentStage}]
-                          </option>
-                        ))}
-                     </select>
-                     {selectedProspectId && selectedProspect && (
-                        <div className="prospect-details">
-                          <strong>{selectedProspect.customAttributes?.name ?? selectedProspect.linkedinUrl}</strong>
-                          <span>{selectedProspect.customAttributes?.company ?? ''}{selectedProspect.customAttributes?.title ? ` · ${selectedProspect.customAttributes.title}` : ''}</span>
-                          <a href={selectedProspect.linkedinUrl} target="_blank" rel="noopener noreferrer">View LinkedIn Profile ↗</a>
-                        </div>
-                     )}
-                    </label>
-                    {readyProspects.length === 0 && (
-                      <div className="empty" style={{ marginTop: '0.5rem' }}>
-                        No prospects are READY_FOR_CAMPAIGN yet. Approve one from the Review Queue, then select it here.
-                      </div>
-                    )}
-                  </>
-                )}
-              </div>
-              <button
-                className="primary"
-                onClick={handleScanProspects}
-                disabled={!selectedProspectId && readyProspects.length === 0}
-                title={!selectedProspectId && readyProspects.length === 0 ? 'Select a prospect first' : 'Scan the selected prospect'}
-                style={{ marginTop: '1rem' }}
-              >
-                Scan for Posts
-              </button>
-              <div style={{ marginTop: '1rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                <label>
-                  Execution account ID
-                  <input type="text" value={actionAccountId} onChange={e => setActionAccountId(e.target.value)} />
-                </label>
-                <label>
-                  Execution mode
-                  <select value={actionMode} onChange={e => setActionMode(e.target.value as 'BROWSER' | 'SIMULATE' | 'MANUAL')}>
-                    <option value="BROWSER">BROWSER (Live Playwright Chrome)</option>
-                    <option value="SIMULATE">SIMULATE</option>
-                    <option value="MANUAL">MANUAL</option>
-                  </select>
-                </label>
-                <button className="primary" onClick={refreshEngagement}>
-                  Refresh server state
+          <div className="panel single-column">
+            <div className="panel-heading">
+              <h3>Engagement Queue</h3>
+              <span className="chip">{queueActions.length} QUEUED ACTIONS</span>
+            </div>
+            <p>
+              Execute queued LinkedIn actions. Comment review happens inside each Campaign's prospect list.
+            </p>
+
+            {/* Execution settings */}
+            <div style={{ marginBottom: '1.5rem', padding: '1rem', background: '#f7faf5', border: '1px solid #d9e2d9', borderRadius: '8px', display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+              <h4 style={{ margin: '0 0 0.25rem', fontSize: '13px', color: '#18342e', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Execution Settings</h4>
+              <label style={{ fontSize: '13px' }}>
+                Account ID
+                <input type="text" value={actionAccountId} onChange={e => setActionAccountId(e.target.value)} style={{ marginTop: '4px' }} />
+              </label>
+              <label style={{ fontSize: '13px' }}>
+                Mode
+                <select value={actionMode} onChange={e => setActionMode(e.target.value as 'BROWSER' | 'SIMULATE' | 'MANUAL')} style={{ marginTop: '4px' }}>
+                  <option value="BROWSER">BROWSER (Live Playwright Chrome)</option>
+                  <option value="SIMULATE">SIMULATE</option>
+                  <option value="MANUAL">MANUAL</option>
+                </select>
+              </label>
+              <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.25rem' }}>
+                <button className="primary" onClick={handleProcessQueue}>
+                  ⚡ Process Pending Queue ({actionMode})
+                </button>
+                <button style={{ border: '1px solid #b9c9bd', background: '#fff', color: '#18342e', padding: '6px 14px', borderRadius: '6px', fontSize: '13px', cursor: 'pointer' }} onClick={refreshEngagement}>
+                  ↺ Refresh
                 </button>
               </div>
-              <div style={{ marginTop: '1rem' }}>
-                <h3>Controls & kill switches (server truth)</h3>
-                {controls.length === 0 ? (
-                  <div className="empty">No controls configured. Like/Comment stay disabled until the server enables them.</div>
-                ) : (
-                  controls.map((control: any) => (
-                    <div key={control.id} style={{ marginBottom: '0.5rem' }}>
-                      <small>{control.actionType} · enabled={String(control.enabled)} · kill={String(control.killSwitchActive)}</small>
-                      <div>
-                        <button onClick={() => handleKillSwitch(control.accountId, control.actionType, true)}>Activate stop</button>
-                        <button onClick={() => handleKillSwitch(control.accountId, control.actionType, false)}>Clear stop</button>
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
             </div>
-            <div className="panel">
-              <div className="panel-heading">
-                <h3>Draft Review Queue</h3>
-                <span className="chip">
-                  {filteredDrafts.length} DRAFTS {selectedProspect ? `FOR ${selectedProspect.customAttributes?.name?.toUpperCase() ?? 'SELECTED PROSPECT'}` : '(ALL PROSPECTS)'}
-                </span>
+
+            {/* Queue actions — only shown when there are items */}
+            {queueActions.length > 0 ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '1.5rem' }}>
+                <h4 style={{ margin: '0 0 0.5rem', fontSize: '13px', color: '#18342e', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Queued Actions</h4>
+                {queueActions.map((action: any) => (
+                  <div key={action.id} style={{ padding: '0.6rem 0.9rem', border: '1px solid #d9e2d9', borderRadius: '6px', background: '#fff', fontSize: '13px', color: '#33453e' }}>
+                    <strong>{action.actionType}</strong> · {action.status} · {action.outcomeLabel ?? 'pending'}
+                    {action.errorCode ? <span style={{ color: '#c0392b', marginLeft: '8px' }}>{action.errorCode}</span> : null}
+                  </div>
+                ))}
               </div>
-              {filteredDrafts.length === 0 ? (
-                <div className="empty">
-                  {selectedProspect
-                    ? `No engagement drafts for ${selectedProspect.customAttributes?.name ?? 'selected prospect'} yet. Click "Scan for Posts" above.`
-                    : 'No engagement drafts yet. Select a prospect and click "Scan for Posts".'}
-                </div>
-              ) : (
-                <div className="review-list">
-                  {filteredDrafts.map(draft => (
-                    <div key={draft.id} className="review-card" style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                      <div style={{ padding: '0.5rem', background: 'rgba(0,0,0,0.02)', borderRadius: '4px', borderLeft: '3px solid #ccc' }}>
-                        <small style={{ color: '#666', display: 'block', marginBottom: '0.25rem' }}>
-                          Post by {draft.post?.authorName} (via {draft.post?.sourceType})
-                        </small>
-                        <em>"{draft.post?.postText}"</em>
-                      </div>
-                      <div style={{ padding: '0.5rem', background: '#e3f2fd', borderRadius: '4px', borderLeft: '3px solid #1976d2' }}>
-                        <small style={{ color: '#1976d2', display: 'block', marginBottom: '0.25rem' }}>
-                          Draft ({draft.actionType}) · status: <strong>{draft.status}</strong>
-                        </small>
-                        <strong>{draft.commentText}</strong>
-                      </div>
-                      <div className="review-actions" style={{ justifyContent: 'flex-start', marginTop: '0.5rem', flexWrap: 'wrap', gap: '0.5rem' }}>
-                        <button className="approve" onClick={() => handleDraftDecision(draft.id, 'APPROVED')}>
-                          ✓ Approve Draft
-                        </button>
-                        <button className="primary" onClick={() => handleRequestAction(draft.id, draft.actionType as 'LIKE' | 'COMMENT')}>
-                          🚀 Execute {draft.actionType} ({actionMode})
-                        </button>
-                        <button className="reject" onClick={() => handleDraftDecision(draft.id, 'SKIPPED')}>
-                          ✕ Skip
-                        </button>
-                      </div>
+            ) : (
+              <div className="empty">No actions in queue right now.</div>
+            )}
+
+            {/* Kill switches */}
+            {controls.length > 0 && (
+              <div>
+                <h4 style={{ margin: '0 0 0.75rem', fontSize: '13px', color: '#18342e', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Kill Switches</h4>
+                {controls.map((control: any) => (
+                  <div key={control.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.5rem 0.9rem', border: '1px solid #d9e2d9', borderRadius: '6px', background: '#fff', marginBottom: '0.5rem' }}>
+                    <small style={{ color: '#45534d' }}>{control.actionType} · enabled={String(control.enabled)} · kill={String(control.killSwitchActive)}</small>
+                    <div style={{ display: 'flex', gap: '0.4rem' }}>
+                      <button onClick={() => handleKillSwitch(control.accountId, control.actionType, true)} style={{ background: '#c0392b', color: '#fff', border: 'none', padding: '4px 10px', borderRadius: '4px', fontSize: '11px', cursor: 'pointer' }}>Stop</button>
+                      <button onClick={() => handleKillSwitch(control.accountId, control.actionType, false)} style={{ background: '#27ae60', color: '#fff', border: 'none', padding: '4px 10px', borderRadius: '4px', fontSize: '11px', cursor: 'pointer' }}>Clear</button>
                     </div>
-                  ))}
-                </div>
-              )}
-              <div style={{ marginTop: '1rem' }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
-                  <h3 style={{ margin: 0 }}>
-                    Queue {selectedProspect ? `(${selectedProspect.customAttributes?.name ?? 'Selected Prospect'})` : '(All)'}
-                  </h3>
-                  <button className="primary" style={{ padding: '0.25rem 0.75rem', fontSize: '0.85rem' }} onClick={handleProcessQueue}>
-                    ⚡ Process Pending Queue ({actionMode})
-                  </button>
-                </div>
-                {filteredQueueActions.length === 0 ? (
-                  <div className="empty">No queued actions for this prospect.</div>
-                ) : (
-                  filteredQueueActions.map((action: any) => (
-                    <div key={action.id}>
-                      <small>{action.actionType} · {action.status} · {action.outcomeLabel ?? 'pending'} · {action.errorCode ?? 'no-error'}</small>
-                    </div>
-                  ))
-                )}
-                <h3>Audit (server truth, redacted)</h3>
-                {auditEvents.length === 0 ? (
-                  <div className="empty">No audit events.</div>
-                ) : (
-                  auditEvents.slice(0, 10).map((event: any) => (
-                    <div key={event.id}>
-                      <small>{event.eventType} · {event.entityType}</small>
-                    </div>
-                  ))
-                )}
+                  </div>
+                ))}
               </div>
-            </div>
+            )}
           </div>
           );
-        })()}
+        })()} 
       </div>
     </div>
   );

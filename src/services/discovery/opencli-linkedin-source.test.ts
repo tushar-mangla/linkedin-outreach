@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   OpenCliLinkedinSource,
   OpenCliUnavailableError,
+  buildFacetedLinkedinSearchUrl,
   cleanLinkedinKeywords,
   parseOpenCliLinkedinMarkdown,
 } from './opencli-linkedin-source.js';
@@ -110,6 +111,18 @@ describe('parseOpenCliLinkedinMarkdown', () => {
   });
 });
 
+describe('buildFacetedLinkedinSearchUrl', () => {
+  it('builds exact faceted LinkedIn search URL with keywords, geoUrn, industry, and pagination', () => {
+    expect(buildFacetedLinkedinSearchUrl('director', 1)).toBe(
+      'https://www.linkedin.com/search/results/people/?keywords=director&origin=FACETED_SEARCH&geoUrn=%5B%22103644278%22%2C%22101165590%22%5D&industry=%5B%22104%22%5D&page=1&spellCorrectionEnabled=true&prioritizeMessage=false',
+    );
+
+    expect(buildFacetedLinkedinSearchUrl('director', 2)).toBe(
+      'https://www.linkedin.com/search/results/people/?keywords=director&origin=FACETED_SEARCH&geoUrn=%5B%22103644278%22%2C%22101165590%22%5D&industry=%5B%22104%22%5D&page=2&spellCorrectionEnabled=true&prioritizeMessage=false',
+    );
+  });
+});
+
 describe('OpenCliLinkedinSource', () => {
   it('removes Google X-Ray operators, punctuation, and boolean words', () => {
     expect(cleanLinkedinKeywords(
@@ -139,11 +152,28 @@ describe('OpenCliLinkedinSource', () => {
 
     expect(runner).toHaveBeenNthCalledWith(
       1,
-      ['browser', 'linkedin', 'open', 'https://www.linkedin.com/search/results/people/?keywords=boutique%20recruitment%20founder'],
+      ['browser', 'linkedin', 'open', 'https://www.linkedin.com/search/results/people/?keywords=boutique%20recruitment%20founder&origin=FACETED_SEARCH&geoUrn=%5B%22103644278%22%2C%22101165590%22%5D&industry=%5B%22104%22%5D&page=1&spellCorrectionEnabled=true&prioritizeMessage=false'],
       expect.objectContaining({ timeoutMs: 15_000 }),
     );
     expect(runner).toHaveBeenNthCalledWith(2, ['browser', 'linkedin', 'extract', '--tab', 'tab-42'], expect.any(Object));
     expect(results).toHaveLength(2);
+  });
+
+  it('supports explicit page numbers in search', async () => {
+    const runner = vi.fn()
+      .mockResolvedValueOnce('{"page":"tab-42"}')
+      .mockResolvedValueOnce(JSON.stringify({
+        content: LINKEDIN_RESULTS_FIXTURE,
+      }));
+    const source = new OpenCliLinkedinSource({ runner });
+
+    await source.search('director', 2);
+
+    expect(runner).toHaveBeenNthCalledWith(
+      1,
+      ['browser', 'linkedin', 'open', 'https://www.linkedin.com/search/results/people/?keywords=director&origin=FACETED_SEARCH&geoUrn=%5B%22103644278%22%2C%22101165590%22%5D&industry=%5B%22104%22%5D&page=2&spellCorrectionEnabled=true&prioritizeMessage=false'],
+      expect.objectContaining({ timeoutMs: 15_000 }),
+    );
   });
 
   it('classifies a missing OpenCLI executable as unavailable for provider fallback', async () => {
@@ -157,3 +187,4 @@ describe('OpenCliLinkedinSource', () => {
     await expect(source.search('founder')).rejects.toBeInstanceOf(OpenCliUnavailableError);
   });
 });
+
