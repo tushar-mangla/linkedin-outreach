@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { EngagementReview } from './components/EngagementReview';
 
 export interface RoleDef {
   id?: string;
@@ -45,6 +46,7 @@ export function App() {
   const [controls, setControls] = useState<any[]>([]);
   const [auditEvents, setAuditEvents] = useState<any[]>([]);
   const [actionStatusByDraft, setActionStatusByDraft] = useState<Record<string, 'executing' | 'executed' | 'failed'>>({});
+  const [isCampaignRunning, setIsCampaignRunning] = useState(false);
   const [actionAccountId, setActionAccountId] = useState('00000000-0000-0000-0000-000000000002');
   const [actionMode, setActionMode] = useState<'BROWSER' | 'SIMULATE' | 'MANUAL'>('BROWSER');
   const [selectedProspectId, setSelectedProspectId] = useState<string>('');
@@ -527,24 +529,46 @@ export function App() {
     }
   };
 
-  const handleProcessQueue = async () => {
+  // Processes ONE action from the queue and returns whether there was something to process.
+  const processSingleQueueItem = async (): Promise<boolean> => {
+    const response = await fetch('/api/queue/process', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ accountId: actionAccountId, mode: actionMode }),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.code || response.statusText);
+    return !!data.processed;
+  };
+
+  // Drains the entire queue one action at a time with a gap between each.
+  // 60s gap is required to avoid LinkedIn rate-limiting (12s was too aggressive).
+  const handleDrainQueue = async (gapMs = 60_000) => {
+    let processed = 0;
     try {
-      setStatusMessage(`Processing queued action (${actionMode})…`);
-      const response = await fetch('/api/queue/process', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ accountId: actionAccountId, mode: actionMode }),
-      });
-      const data = await response.json();
-      if (!response.ok || !data.processed) {
-        setStatusMessage(`Queue processing note: ${data.reason || data.code || response.statusText}`);
+      while (true) {
+        setStatusMessage(`Executing action ${processed + 1} from queue (${actionMode})…`);
+        const didProcess = await processSingleQueueItem();
+        if (!didProcess) break;
+        processed++;
+        await refreshEngagement();
+        setStatusMessage(`✓ Action ${processed} done. Waiting ${gapMs / 1000}s before next…`);
+        await new Promise(r => setTimeout(r, gapMs));
+      }
+      if (processed === 0) {
+        setStatusMessage('Queue is empty — nothing to process.');
       } else {
-        setStatusMessage(`Action executed: ${data.result?.outcomeLabel || data.action?.status || 'DONE'} (status: ${data.action?.status})`);
+        setStatusMessage(`🚀 Done! Executed ${processed} action(s) from queue.`);
       }
       await refreshEngagement();
     } catch (e: any) {
-      setStatusMessage(`Queue processing failed: ${e.message}`);
+      setStatusMessage(`Queue execution failed after ${processed} action(s): ${e.message}`);
     }
+  };
+
+  // Legacy single-shot handler kept for the manual "Process Queue" button.
+  const handleProcessQueue = async () => {
+    await handleDrainQueue();
   };
 
   const handleRequestAction = async (draftId: string, actionType: 'LIKE' | 'COMMENT', autoProcess = true) => {
@@ -592,17 +616,21 @@ export function App() {
       return;
     }
     setActionStatusByDraft(prev => ({ ...prev, [commentDraft.id]: 'executing' }));
-    setStatusMessage(`Executing like and comment for ${commentDraft.post?.authorName ?? 'prospect'} (${actionMode})...`);
+    setStatusMessage(`Queueing like and comment for ${commentDraft.post?.authorName ?? 'prospect'}…`);
     try {
+      // Step 1: Queue both actions (LIKE first, then COMMENT) — do NOT auto-process yet.
       const matchingLike = draftsForProspect.find(d => d.actionType === 'LIKE' && (d.postId === commentDraft.postId || d.post?.id === commentDraft.post?.id));
       if (matchingLike) {
         await handleDraftDecision(matchingLike.id, 'APPROVED');
         await handleRequestAction(matchingLike.id, 'LIKE', false);
       }
       await handleDraftDecision(commentDraft.id, 'APPROVED');
-      await handleRequestAction(commentDraft.id, 'COMMENT', true);
+      await handleRequestAction(commentDraft.id, 'COMMENT', false);
+
+      // Step 2: Drain the full queue with gaps so LIKE and COMMENT both execute.
+      await handleDrainQueue(12_000);
+
       setActionStatusByDraft(prev => ({ ...prev, [commentDraft.id]: 'executed' }));
-      setStatusMessage(`🚀 Executed! Like and comment dispatched to LinkedIn.`);
       await refreshProspects(selectedCampaignId || undefined);
     } catch (e: any) {
       setActionStatusByDraft(prev => ({ ...prev, [commentDraft.id]: 'failed' }));
@@ -617,6 +645,92 @@ export function App() {
       await handleDraftDecision(matchingLike.id, 'SKIPPED');
     }
     await refreshProspects(selectedCampaignId || undefined);
+  };
+
+  // ─── Campaign-level automation ──────────────────────────────────────────────
+
+  // Runs the entire campaign: auto-approves all pending drafts, queues all
+  // LIKE + COMMENT pairs, then drains the full queue with 60s gaps.
+  const handleRunCampaign = async () => {
+    if (isCampaignRunning) return;
+    setIsCampaignRunning(true);
+    setStatusMessage('Starting campaign run… collecting all drafts.');
+    try {
+      // Gather all comment drafts across all prospects that are not yet done
+      const allCommentDrafts: { draft: any; allDrafts: any[] }[] = [];
+      for (const prospect of prospects) {
+        const draftsForProspect = campaignDrafts[prospect.id] ?? [];
+        const commentDrafts = draftsForProspect.filter(
+          (d: any) =>
+            d.actionType === 'COMMENT' &&
+            d.status !== 'SKIPPED' &&
+            d.status !== 'REJECTED' &&
+            actionStatusByDraft[d.id] !== 'executed'
+        );
+        for (const draft of commentDrafts) {
+          allCommentDrafts.push({ draft, allDrafts: draftsForProspect });
+        }
+      }
+      if (allCommentDrafts.length === 0) {
+        setStatusMessage('No pending drafts to run in this campaign.');
+        return;
+      }
+      setStatusMessage(`Approving & queueing ${allCommentDrafts.length} comment(s) + matching likes…`);
+
+      // Step 1: Approve + queue all pairs (no auto-process yet)
+      for (const { draft, allDrafts } of allCommentDrafts) {
+        const matchingLike = allDrafts.find(
+          (d: any) => d.actionType === 'LIKE' && (d.postId === draft.postId || d.post?.id === draft.post?.id)
+        );
+        if (matchingLike) {
+          await handleDraftDecision(matchingLike.id, 'APPROVED');
+          await handleRequestAction(matchingLike.id, 'LIKE', false);
+        }
+        await handleDraftDecision(draft.id, 'APPROVED');
+        await handleRequestAction(draft.id, 'COMMENT', false);
+        setActionStatusByDraft(prev => ({ ...prev, [draft.id]: 'executing' }));
+      }
+
+      setStatusMessage(`All ${allCommentDrafts.length * 2} actions queued. Executing with 60s gaps…`);
+
+      // Step 2: Drain the entire queue
+      await handleDrainQueue(60_000);
+
+      // Mark all as executed in UI
+      setActionStatusByDraft(prev => {
+        const next = { ...prev };
+        for (const { draft } of allCommentDrafts) next[draft.id] = 'executed';
+        return next;
+      });
+      await refreshProspects(selectedCampaignId || undefined);
+    } catch (e: any) {
+      setStatusMessage(`Campaign run failed: ${e.message}`);
+    } finally {
+      setIsCampaignRunning(false);
+    }
+  };
+
+  // Calls the server-side retry-failed endpoint then re-runs the drain.
+  const handleRetryFailed = async () => {
+    if (isCampaignRunning) return;
+    setIsCampaignRunning(true);
+    setStatusMessage('Resetting failed comment actions for retry…');
+    try {
+      const res = await fetch('/api/queue/retry-failed', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ windowHours: 24 }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.code || res.statusText);
+      setStatusMessage(`Reset ${data.reset} failed action(s). Re-running…`);
+      await handleDrainQueue(60_000);
+      await refreshProspects(selectedCampaignId || undefined);
+    } catch (e: any) {
+      setStatusMessage(`Retry failed: ${e.message}`);
+    } finally {
+      setIsCampaignRunning(false);
+    }
   };
 
   const handleKillSwitch = async (accountId: string, actionType: string, active: boolean) => {
@@ -1010,251 +1124,23 @@ export function App() {
 
         {/* TAB CONTENT: PIPELINE */}
         {activeTab === 'pipeline' && (
-          <div className="panel table-panel single-column">
-            <div className="panel-heading">
-              <h3>Prospect Qualification Pipeline</h3>
-              <span className="chip">{selectedCampaignId ? `${prospects.length} PROSPECTS` : `${campaignsList.length} CAMPAIGNS`}</span>
-            </div>
-
-
-            {!selectedCampaignId ? (
-              <div style={{ marginBottom: '2rem' }}>
-                <h4 style={{ margin: '0 0 1rem', color: '#18342e' }}>Select a Campaign</h4>
-                <div style={{ display: 'grid', gap: '1rem' }}>
-                  {campaignsList.length === 0 ? (
-                    <div className="empty">No campaigns available. Go to 'Import Prospects' to discover leads.</div>
-                  ) : (
-                    campaignsList.map(c => (
-                      <div key={c.id} style={{ padding: '1rem', border: '1px solid #d9e2d9', borderRadius: '8px', background: '#fff', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <div>
-                          <h4 style={{ margin: '0 0 0.5rem', color: '#18342e' }}>{c.name}</h4>
-                          <span className="chip">{c.enrolledCount} Leads</span>
-                        </div>
-                        <button
-                          className="primary"
-                          onClick={() => {
-                            setSelectedCampaignId(c.id);
-                            refreshProspects(c.id);
-                          }}
-                        >
-                          View Prospects ➔
-                        </button>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-            ) : (
-              <div>
-                <div style={{ marginBottom: '1.2rem', padding: '12px 16px', background: '#eef1ec', border: '1px solid #d9e2d9', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '15px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1 }}>
-                    <span style={{ fontSize: '12px', fontWeight: '800', color: '#18342e', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                      🎯 Active Campaign: {campaignsList.find(c => c.id === selectedCampaignId)?.name || 'Unknown Campaign'}
-                    </span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSelectedCampaignId('');
-                      refreshProspects('');
-                    }}
-                    style={{ border: '0', background: '#18342e', color: '#fff', padding: '6px 12px', borderRadius: '6px', fontSize: '11px', fontWeight: '700', cursor: 'pointer' }}
-                  >
-                    ← Back to Campaigns
-                  </button>
-                </div>
-
-                {prospectsState === 'loading' && <div className="empty">Loading prospects from the server…</div>}
-                {prospectsState === 'error' && <div className="empty">Prospects unavailable. Prior server state is preserved; no local fallback is shown.</div>}
-                {prospectsState === 'empty' && !selectedCampaignId && <div className="empty">No prospects on the server yet. Use "Add Prospect" above or import a CSV on the Import Prospects tab to get started.</div>}
-                {prospectsState === 'empty' && selectedCampaignId && <div className="empty">No prospects found in this campaign.</div>}
-                {prospectsState === 'ready' && (
-              <div style={{ display: 'grid', gap: '1rem' }}>
-                {prospects.map(c => {
-                  const draftsForProspect = campaignDrafts[c.id] ?? [];
-                  const commentDrafts = draftsForProspect.filter(d => d.actionType === 'COMMENT' && d.status !== 'SKIPPED' && d.status !== 'REJECTED');
-                  const pendingCount = commentDrafts.filter(d => d.status === 'PENDING_REVIEW' || d.status === 'PENDING').length;
-                  const approvedCount = commentDrafts.filter(d => d.status === 'APPROVED' && actionStatusByDraft[d.id] !== 'executed').length;
-
-                  return (
-                    <div key={c.id} style={{ border: '1px solid #d9e2d9', borderRadius: '10px', background: '#fff', overflow: 'hidden' }}>
-                      {/* Prospect Header */}
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', padding: '1rem 1.25rem', borderBottom: commentDrafts.length > 0 ? '1px solid #e8f0e8' : 'none' }}>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', flex: 1 }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-                            <strong style={{ fontSize: '15px', color: '#18342e' }}>{c.name}</strong>
-                            <span className={`stage ${c.currentStage.toLowerCase()}`}>{c.currentStage}</span>
-                            {pendingCount > 0 && (
-                              <span style={{ background: '#fff3cd', color: '#856404', border: '1px solid #ffc107', borderRadius: '4px', fontSize: '11px', fontWeight: '700', padding: '2px 8px' }}>
-                                💬 {pendingCount} comment{pendingCount > 1 ? 's' : ''} to review
-                              </span>
-                            )}
-                            {approvedCount > 0 && (
-                              <span style={{ background: '#e8f5e9', color: '#2e7d32', border: '1px solid #a5d6a7', borderRadius: '4px', fontSize: '11px', fontWeight: '700', padding: '2px 8px' }}>
-                                🚀 {approvedCount} approved & ready to execute
-                              </span>
-                            )}
-                          </div>
-                          <span style={{ fontSize: '13px', color: '#45534d' }}>{c.title}{c.company ? ` · ${c.company}` : ''}{c.location ? ` · ${c.location}` : ''}</span>
-                          <a href={c.linkedinUrl} target="_blank" rel="noopener noreferrer" style={{ fontSize: '12px', color: '#1976d2' }}>View LinkedIn ↗</a>
-                        </div>
-                        <div style={{ display: 'flex', gap: '0.5rem', flexShrink: 0 }}>
-                          {selectedCampaignId && draftsForProspect.length === 0 && (
-                            <button
-                              style={{ border: '1px solid #b9c9bd', background: '#f7faf5', color: '#18342e', padding: '5px 12px', borderRadius: '6px', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}
-                              onClick={() => handleScanProspect(c.id)}
-                            >
-                              🔍 Scan Posts
-                            </button>
-                          )}
-                          <button className="reject" onClick={() => handleDeleteProspect(c)}>Delete</button>
-                        </div>
-                      </div>
-
-                      {/* Draft Comments */}
-                      {commentDrafts.length > 0 && (
-                        <div style={{ padding: '0.75rem 1.25rem', background: '#fafcf8', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                          {commentDrafts.map(draft => {
-                            const isApproved = draft.status === 'APPROVED';
-                            const execState = actionStatusByDraft[draft.id];
-                            const isExecuting = execState === 'executing';
-                            const isExecuted = execState === 'executed';
-
-                            return (
-                              <div
-                                key={draft.id}
-                                style={{
-                                  border: isExecuted ? '1px solid #c8e6c9' : isApproved ? '1px solid #ffe082' : '1px solid #e0ead0',
-                                  background: isExecuted ? '#f9fdf9' : isApproved ? '#fffdf7' : '#fff',
-                                  borderRadius: '8px',
-                                  overflow: 'hidden',
-                                }}
-                              >
-                                {/* Post context */}
-                                {draft.post && (
-                                  <div style={{ padding: '0.6rem 0.9rem', background: '#f3f7f0', borderBottom: '1px solid #e0ead0' }}>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px', flexWrap: 'wrap', gap: '6px' }}>
-                                      <small style={{ color: '#6b7e73', fontWeight: '600', fontSize: '11px' }}>
-                                        POST BY {(draft.post.authorName ?? 'Unknown').toUpperCase()} · {draft.post.sourceType ?? ''}
-                                      </small>
-                                      {draft.post.postUrl && (
-                                        <a
-                                          href={draft.post.postUrl}
-                                          target="_blank"
-                                          rel="noopener noreferrer"
-                                          style={{ fontSize: '11px', color: '#1976d2', textDecoration: 'none', fontWeight: '700' }}
-                                        >
-                                          🔗 View Post on LinkedIn ↗
-                                        </a>
-                                      )}
-                                    </div>
-                                    <em style={{ fontSize: '13px', color: '#33453e', lineHeight: '1.5', display: 'block' }}>"{draft.post.postText}"</em>
-                                  </div>
-                                )}
-                                {/* Draft comment */}
-                                <div style={{ padding: '0.6rem 0.9rem' }}>
-                                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
-                                    <div>
-                                      {isExecuted ? (
-                                        <span style={{ fontSize: '11px', fontWeight: '800', color: '#2e7d32', background: '#e8f5e9', border: '1px solid #a5d6a7', padding: '2px 8px', borderRadius: '4px' }}>
-                                          🚀 EXECUTED (Published to LinkedIn)
-                                        </span>
-                                      ) : isExecuting ? (
-                                        <span style={{ fontSize: '11px', fontWeight: '800', color: '#1565c0', background: '#e3f2fd', border: '1px solid #90caf9', padding: '2px 8px', borderRadius: '4px' }}>
-                                          ⏳ EXECUTING ON LINKEDIN...
-                                        </span>
-                                      ) : isApproved ? (
-                                        <span style={{ fontSize: '11px', fontWeight: '800', color: '#b78103', background: '#fff8e1', border: '1px solid #ffe082', padding: '2px 8px', borderRadius: '4px' }}>
-                                          ✓ APPROVED — Ready to Execute 🚀
-                                        </span>
-                                      ) : (
-                                        <small style={{ color: '#1976d2', fontWeight: '700', fontSize: '11px' }}>
-                                          💬 COMMENT DRAFT · {draft.status}
-                                        </small>
-                                      )}
-                                    </div>
-                                    <span style={{ fontSize: '11px', color: '#2e7d32', fontWeight: '600', background: '#e8f5e9', padding: '2px 6px', borderRadius: '4px' }}>
-                                      👍 Like included automatically
-                                    </span>
-                                  </div>
-
-                                  <p style={{ margin: '0 0 0.75rem', fontSize: '14px', color: '#18342e', lineHeight: '1.6', fontWeight: '500' }}>
-                                    {draft.commentText}
-                                  </p>
-
-                                  {/* Call to action guidance when approved */}
-                                  {isApproved && !isExecuted && !isExecuting && (
-                                    <div style={{ marginBottom: '0.75rem', padding: '6px 10px', background: '#fff9c4', borderRadius: '6px', fontSize: '12px', color: '#7f6000', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                      <span>👉 Comment & Like are approved! Click <strong>"Execute"</strong> below to publish to LinkedIn.</span>
-                                    </div>
-                                  )}
-
-                                  {isExecuted && (
-                                    <div style={{ marginBottom: '0.75rem', padding: '6px 10px', background: '#e8f5e9', borderRadius: '6px', fontSize: '12px', color: '#2e7d32', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                      <span>✓ Action completed! The post has been liked and the comment published.</span>
-                                    </div>
-                                  )}
-
-                                  <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                                    <button
-                                      className={isApproved || isExecuted ? '' : 'approve'}
-                                      disabled={isApproved || isExecuting || isExecuted}
-                                      style={isApproved || isExecuted ? {
-                                        background: '#f1f8e9',
-                                        color: '#33691e',
-                                        border: '1px solid #c5e1a5',
-                                        padding: '5px 12px',
-                                        borderRadius: '6px',
-                                        fontSize: '12px',
-                                        fontWeight: '700',
-                                        cursor: 'not-allowed',
-                                        opacity: 0.9,
-                                      } : undefined}
-                                      onClick={() => handleApproveCommentWithLike(draft, draftsForProspect)}
-                                    >
-                                      {isApproved || isExecuted ? '✓ Approved' : '✓ Approve (Comment + Like)'}
-                                    </button>
-
-                                    <button
-                                      className="primary"
-                                      disabled={isExecuting || isExecuted}
-                                      style={{
-                                        padding: '6px 14px',
-                                        fontSize: '12px',
-                                        fontWeight: '700',
-                                        cursor: isExecuting || isExecuted ? 'not-allowed' : 'pointer',
-                                        background: isExecuted ? '#2e7d32' : isApproved ? '#0d47a1' : undefined,
-                                        opacity: isExecuted ? 0.85 : 1,
-                                      }}
-                                      onClick={() => handleExecuteCommentWithLike(draft, draftsForProspect)}
-                                    >
-                                      {isExecuted ? '✓ Executed (Published)' : isExecuting ? '⏳ Executing...' : isApproved ? `🚀 Execute Now (${actionMode})` : `🚀 Execute (${actionMode})`}
-                                    </button>
-
-                                    {!isExecuted && (
-                                      <button
-                                        className="reject"
-                                        disabled={isExecuting}
-                                        onClick={() => handleSkipCommentWithLike(draft, draftsForProspect)}
-                                      >
-                                        ✕ Skip
-                                      </button>
-                                    )}
-                                  </div>
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-              </div>
-            )}
-          </div>
+          <EngagementReview
+            prospects={prospects}
+            campaignsList={campaignsList}
+            selectedCampaignId={selectedCampaignId}
+            campaignDrafts={campaignDrafts}
+            prospectsState={prospectsState}
+            actionStatusByDraft={actionStatusByDraft}
+            actionMode={actionMode}
+            isCampaignRunning={isCampaignRunning}
+            onSelectCampaign={setSelectedCampaignId}
+            onRefreshProspects={(cId) => refreshProspects(cId || undefined)}
+            onScanProspect={handleScanProspect}
+            onDeleteProspect={handleDeleteProspect}
+            onRunCampaign={handleRunCampaign}
+            onRetryFailed={handleRetryFailed}
+            onSkipCommentWithLike={handleSkipCommentWithLike}
+          />
         )}
 
 

@@ -256,6 +256,40 @@ export class OpenCliExecutor implements LinkedInExecutor {
 
       await new Promise((r) => setTimeout(r, 2000));
 
+      // 5. Verify the comment actually posted by checking if it appears in the DOM
+      //    and isn't just stuck in the editor
+      const verifyScript = `(() => {
+        const errorToast = document.querySelector('.artdeco-toast-item--error');
+        if (errorToast) return { error: 'LINKEDIN_ERROR_TOAST: ' + errorToast.innerText };
+
+        // Check if the text is stuck in the editor
+        const editors = Array.from(document.querySelectorAll(
+          '.ql-editor[contenteditable="true"], div[contenteditable="true"][role="textbox"], .comments-comment-box div[contenteditable="true"]'
+        )).filter(e => e.offsetParent !== null && !e.classList.contains('ql-clipboard'));
+        
+        if (editors.length > 0) {
+          const editorText = editors[0].innerText || '';
+          if (editorText.trim() === ${commentTextJson}.trim()) {
+            return { error: 'COMMENT_STUCK_IN_EDITOR' };
+          }
+        }
+
+        // Optional: Check if the comment text is found in the comments list
+        const commentList = document.querySelector('.comments-comments-list, .feed-shared-update-v2__comments-container');
+        if (commentList && !commentList.innerText.includes(${commentTextJson}.substring(0, 15))) {
+           // Not found in the comments list, but might be taking time to render.
+           // For now, if it's not in the editor and no error toast, we might assume success,
+           // but let's be strict.
+           return { error: 'COMMENT_NOT_VISIBLE_AFTER_SUBMIT' };
+        }
+
+        return { success: true };
+      })()`;
+      const verifyResult = await this.evalJs(verifyScript);
+      if (verifyResult && verifyResult.error) {
+        throw new Error(verifyResult.error);
+      }
+
       return {
         success: true,
         timestamp,

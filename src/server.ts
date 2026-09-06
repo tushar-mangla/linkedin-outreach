@@ -4,7 +4,7 @@ import express from 'express';
 import fs from 'node:fs';
 import path from 'node:path';
 import { db, withTenantTransaction } from './db/client.js';
-import { and, asc, desc, eq, inArray } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, inArray } from 'drizzle-orm';
 import { icpDefinitions, importBatches, prospects, engagementPosts, engagementControls, browserAccounts, auditEvents, scheduledActions, reviewDecisions, icpEvaluations, manualTasks, executionEvidence, engagementHistory, campaignEnrollments, campaigns } from './db/schema.js';
 import { IcpCriteriaSchema } from './schemas/icp.js';
 import { importProspectsFromCsv } from './services/icp/csv-importer.js';
@@ -908,6 +908,31 @@ app.get('/api/queue/actions', async (req, res) => {
   }
 });
 
+// Reset recently failed/falsely-completed comment actions so the UI can re-queue them.
+app.post('/api/queue/retry-failed', async (req, res) => {
+  try {
+    const tenantId = tenantOf(req);
+    const windowHours = Number(req.body?.windowHours ?? 24);
+    const since = new Date(Date.now() - windowHours * 60 * 60 * 1000);
+    const result = await withRequestTenant(req, () =>
+      db.update(scheduledActions)
+        .set({ status: 'FAILED', errorCode: 'RESET_FOR_RETRY', outcomeLabel: 'failed' })
+        .where(
+          and(
+            eq(scheduledActions.tenantId, tenantId),
+            eq(scheduledActions.status, 'COMPLETED'),
+            eq(scheduledActions.actionType, 'comment'),
+            gte(scheduledActions.createdAt, since)
+          )
+        )
+        .returning({ id: scheduledActions.id })
+    );
+    res.json({ reset: result.length, ids: result.map(r => r.id), correlationId: correlationOf(req) });
+  } catch (err) {
+    res.status(500).json(structuredRefusal('EXECUTION_FAILED', errorResponse(err), correlationOf(req)));
+  }
+});
+
 app.get('/api/execution/audit', async (req, res) => {
   try {
     const tenantId = tenantOf(req);
@@ -918,9 +943,77 @@ app.get('/api/execution/audit', async (req, res) => {
   }
 });
 
+
+// ─── Server-side auto-drain worker ───────────────────────────────────────────
+// Processes one PENDING action every 60 seconds so the queue drains even if
+// the browser tab is closed after clicking "Run Campaign".
+
+const AUTO_DRAIN_GAP_MS = 60_000;
+const AUTO_DRAIN_WORKER_ID = 'server-auto-drain-v1';
+let autoDrainRunning = false;
+
+async function runAutoDrainCycle(): Promise<void> {
+  if (autoDrainRunning) return; // Prevent concurrent runs
+  autoDrainRunning = true;
+  try {
+    // Find the oldest PENDING action to determine which tenant/account/mode to use
+    const pending = await db.query.scheduledActions.findFirst({
+      where: eq(scheduledActions.status, 'PENDING'),
+      orderBy: [asc(scheduledActions.scheduledFor), asc(scheduledActions.createdAt)],
+    });
+    if (!pending) return; // Nothing to do
+
+    const tenantId = String(pending.tenantId);
+    const accountId = String(pending.accountId);
+    const persistedMode = String((pending as { mode?: unknown }).mode ?? 'SIMULATE').toUpperCase();
+
+    if (persistedMode === 'BROWSER' && process.env.FEATURE_05_BROWSER_ENABLED !== '1') {
+      console.log('[AutoDrain] Skipping: BROWSER mode is not enabled (set FEATURE_05_BROWSER_ENABLED=1).');
+      return;
+    }
+
+    // Acquire a worker lease
+    const adapter = new DrizzleAdapter(db as never);
+    const leaseService = new LeaseService(adapter);
+    const leaseResult = await withRequestTenantUnsafe(tenantId, () =>
+      leaseService.acquireLeaseWithToken(tenantId, accountId, AUTO_DRAIN_WORKER_ID, 300)
+    );
+    if (!leaseResult.acquired || !leaseResult.leaseToken) {
+      console.log('[AutoDrain] Could not acquire lease — another worker may be active.');
+      return;
+    }
+
+    // Process one action
+    const queue = buildQueueForMode(persistedMode);
+    const result = await withRequestTenantUnsafe(tenantId, () =>
+      queue.processNextAction(tenantId, accountId, AUTO_DRAIN_WORKER_ID, leaseResult.leaseToken!)
+    );
+
+    if (result.processed) {
+      console.log(
+        `[AutoDrain] ✓ ${result.action?.actionType?.toUpperCase()} → ${result.result?.outcomeLabel ?? result.reason ?? 'done'}`
+      );
+    } else {
+      console.log(`[AutoDrain] Queue empty or skipped: ${result.reason}`);
+    }
+  } catch (err) {
+    console.error('[AutoDrain] Error:', (err as Error).message);
+  } finally {
+    autoDrainRunning = false;
+  }
+}
+
+// Status endpoint so the UI can confirm the auto-drain worker is alive
+app.get('/api/queue/drain/status', (_req, res) => {
+  res.json({ autoDrainEnabled: true, gapSeconds: AUTO_DRAIN_GAP_MS / 1000, workerId: AUTO_DRAIN_WORKER_ID });
+});
+
 if (process.env.VITEST !== 'true' && process.env.NODE_ENV !== 'test') {
+  setInterval(runAutoDrainCycle, AUTO_DRAIN_GAP_MS);
+  console.log(`[AutoDrain] Server-side queue drain worker started (gap: ${AUTO_DRAIN_GAP_MS / 1000}s)`);
   listenWithFallback(port);
 }
+
 
 function listenWithFallback(startPort: number, attemptsLeft = 10): void {
   const server = app.listen(startPort, () => {
