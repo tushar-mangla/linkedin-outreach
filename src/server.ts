@@ -256,19 +256,24 @@ app.get('/api/campaigns', async (request, response) => {
 // ─── Prospect routes ──────────────────────────────────────────────────────────
 
 app.get('/api/prospects', async (request, response) => {
-  const tenantId = tenantOf(request);
-  const campaignId = typeof request.query.campaignId === 'string' && request.query.campaignId.trim() ? request.query.campaignId.trim() : undefined;
+  try {
+    const tenantId = tenantOf(request);
+    const campaignId = typeof request.query.campaignId === 'string' && request.query.campaignId.trim() ? request.query.campaignId.trim() : undefined;
 
-  let results;
-  if (campaignId) {
-    const enrollments = await withRequestTenant(request, () => db.select({ prospectId: campaignEnrollments.prospectId }).from(campaignEnrollments).where(eq(campaignEnrollments.campaignId, campaignId)));
-    const ids = enrollments.map(e => e.prospectId);
-    if (ids.length === 0) return response.json([]);
-    results = await withRequestTenant(request, () => db.select().from(prospects).where(and(eq(prospects.tenantId, tenantId), inArray(prospects.id, ids))).orderBy(desc(prospects.updatedAt)));
-  } else {
-    results = await withRequestTenant(request, () => db.select().from(prospects).where(eq(prospects.tenantId, tenantId)).orderBy(desc(prospects.updatedAt)));
+    let results;
+    if (campaignId) {
+      const enrollments = await withRequestTenant(request, () => db.select({ prospectId: campaignEnrollments.prospectId }).from(campaignEnrollments).where(eq(campaignEnrollments.campaignId, campaignId)));
+      const ids = enrollments.map(e => e.prospectId);
+      if (ids.length === 0) return response.json([]);
+      results = await withRequestTenant(request, () => db.select().from(prospects).where(and(eq(prospects.tenantId, tenantId), inArray(prospects.id, ids))).orderBy(desc(prospects.updatedAt)));
+    } else {
+      results = await withRequestTenant(request, () => db.select().from(prospects).where(eq(prospects.tenantId, tenantId)).orderBy(desc(prospects.updatedAt)));
+    }
+    response.json(results);
+  } catch (error) {
+    console.error('[API] /api/prospects failed:', error);
+    response.status(500).json({ error: 'Database connection failed' });
   }
-  response.json(results);
 });
 
 app.delete('/api/prospects/:id', async (request, response) => {
@@ -1037,9 +1042,15 @@ async function runAutoDrainCycle(): Promise<void> {
     );
 
     if (result.processed) {
-      console.log(
-        `[AutoDrain] ✓ ${result.action?.actionType?.toUpperCase()} → ${result.result?.outcomeLabel ?? result.reason ?? 'done'}`
-      );
+      if (result.result?.outcomeLabel === 'failed' || result.reason) {
+        console.error(
+          `[AutoDrain] ✗ ${result.action?.actionType?.toUpperCase()} FAILED → ${result.result?.errorCode ?? result.reason}`
+        );
+      } else {
+        console.log(
+          `[AutoDrain] ✓ ${result.action?.actionType?.toUpperCase()} → ${result.result?.outcomeLabel ?? 'done'}`
+        );
+      }
       
       if (result.result?.outcomeLabel === 'failed' && result.result?.errorCode === 'SESSION_EXPIRED') {
         consecutiveSessionFailures++;
@@ -1047,6 +1058,22 @@ async function runAutoDrainCycle(): Promise<void> {
       } else if (result.result?.outcomeLabel && result.result?.outcomeLabel !== 'failed') {
          // Reset consecutive errors if an action succeeds
          consecutiveSessionFailures = 0;
+         
+         // If they want 'one like and one comment' together, let's peek and see if the immediate next action belongs to the same prospect.
+         const nextPending = await db.query.scheduledActions.findFirst({
+           where: eq(scheduledActions.status, 'PENDING'),
+           orderBy: [asc(scheduledActions.scheduledFor), asc(scheduledActions.createdAt)],
+         });
+         
+         if (nextPending && nextPending.prospectId === result.action?.prospectId) {
+           console.log(`[AutoDrain] Found paired action for same prospect. Processing immediately...`);
+           const result2 = await withRequestTenantUnsafe(tenantId, () =>
+             queue.processNextAction(tenantId, accountId, AUTO_DRAIN_WORKER_ID, leaseResult.leaseToken!)
+           );
+           if (result2.processed) {
+             console.log(`[AutoDrain] ✓ ${result2.action?.actionType?.toUpperCase()} (paired) → ${result2.result?.outcomeLabel ?? result2.reason ?? 'done'}`);
+           }
+         }
       }
     } else {
       console.log(`[AutoDrain] Queue empty or skipped: ${result.reason}`);

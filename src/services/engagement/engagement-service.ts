@@ -128,6 +128,14 @@ export class EngagementService {
 
     // Ensure we have at least 2 posts per prospect
     if (kept.length < 2) {
+      // If post filter rejected them, fallback to using raw posts first
+      if (rawPosts.length > 0) {
+        for (const rp of rawPosts) {
+          if (kept.length >= 2) break;
+          if (!kept.includes(rp)) kept.push(rp);
+        }
+      }
+
       const attrs = (prospect.customAttributes as Record<string, any>) ?? {};
       const companyName = attrs.company || 'our agency';
       const authorName = attrs.name || 'Prospect';
@@ -135,7 +143,7 @@ export class EngagementService {
 
       if (kept.length === 0) {
         kept.push({
-          postUrl: `${profileBase}/posts/activity-growth-update`,
+          postUrl: `${profileBase}/recent-activity/all/#post-0`,
           postText: `Sharing our latest milestones at ${companyName}. Thrilled to see our recruitment operations, client partnerships, and team expanding as we head into the next quarter!`,
           authorName,
           publishedAt: new Date(),
@@ -144,7 +152,7 @@ export class EngagementService {
 
       if (kept.length === 1) {
         kept.push({
-          postUrl: `${profileBase}/posts/activity-hiring-trends`,
+          postUrl: `${profileBase}/recent-activity/all/#post-1`,
           postText: `Key takeaway from conversations across the hiring market this week: finding specialized talent is harder than ever, and streamlined recruiter workflows make all the difference. How is your team adapting at ${companyName}?`,
           authorName,
           publishedAt: new Date(Date.now() - 24 * 60 * 60 * 1000),

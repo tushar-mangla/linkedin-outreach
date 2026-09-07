@@ -1,7 +1,4 @@
-[2026-09-06T19:33:29.751Z] [INFO] ◇ injected env (0) from .env [2m// tip: ⌘ enable debugging { debug: true }[0m
-[2026-09-06T19:33:30.071Z] [INFO] [AutoDrain] Server-side queue drain worker started (gap: 180s)
-[2026-09-06T19:33:30.073Z] [INFO] RecruitmentOS ICP server listening on http://localhost:3000
-[2026-09-06T19:36:30.083Z] [ERROR] (node:26026) Warning: SECURITY WARNING: The SSL modes 'prefer', 'require', and 'verify-ca' are treated as aliases for 'verify-full'.
+[2026-09-07T10:50:19.802Z] [ERROR] (node:44475) Warning: SECURITY WARNING: The SSL modes 'prefer', 'require', and 'verify-ca' are treated as aliases for 'verify-full'.
 In the next major version (pg-connection-string v3.0.0 and pg v9.0.0), these modes will adopt standard libpq semantics, which have weaker security guarantees.
 
 To prepare for this change:
@@ -10,115 +7,56 @@ To prepare for this change:
 
 See https://www.postgresql.org/docs/current/libpq-ssl.html for libpq SSL mode definitions.
 (Use `node --trace-warnings ...` to show where the warning was created)
-[2026-09-06T19:40:22.023Z] [INFO] [ProfileActivityPostSource] OpenCLI fetched 5 posts for https://www.linkedin.com/in/gary-reba-58a1681
-[2026-09-06T19:48:44.233Z] [INFO] [AutoDrain] ✓ LIKE → EXECUTION_FAILED
-[2026-09-06T19:51:30.955Z] [INFO] [AutoDrain] Could not acquire lease — another worker may be active.
-[2026-09-06T19:51:59.188Z] [INFO] ◇ injected env (0) from .env [2m// tip: ⌘ multiple files { path: ['.env.local', '.env'] }[0m
-[2026-09-06T19:51:59.851Z] [INFO] [AutoDrain] Server-side queue drain worker started (gap: 180s)
-[2026-09-06T19:51:59.851Z] [INFO] [AutoQueue] Auto-approve and queue worker started (every 30s)
-[2026-09-06T19:51:59.853Z] [INFO] RecruitmentOS ICP server listening on http://localhost:3000
-[2026-09-06T19:52:12.717Z] [ERROR] (node:27206) Warning: SECURITY WARNING: The SSL modes 'prefer', 'require', and 'verify-ca' are treated as aliases for 'verify-full'.
-In the next major version (pg-connection-string v3.0.0 and pg v9.0.0), these modes will adopt standard libpq semantics, which have weaker security guarantees.
-
-To prepare for this change:
-- If you want the current behavior, explicitly use 'sslmode=verify-full'
-- If you want libpq compatibility now, use 'uselibpqcompat=true&sslmode=require'
-
-See https://www.postgresql.org/docs/current/libpq-ssl.html for libpq SSL mode definitions.
-(Use `node --trace-warnings ...` to show where the warning was created)
-[2026-09-06T19:52:30.130Z] [INFO] [AutoQueue] Found 3 pending drafts. Auto-approving...
-[2026-09-06T19:52:36.540Z] [INFO] [AutoQueue] Automatically queued COMMENT for draft acd83be7-2d99-44ea-b235-332b4322c774
-[2026-09-06T19:52:44.140Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 848cf88e-559c-4089-9319-bf84eb929336
-[2026-09-06T19:52:51.022Z] [INFO] [AutoQueue] Automatically queued LIKE for draft b2e70065-505d-4366-9d28-1f9984a9d835
-[2026-09-06T19:53:56.852Z] [INFO] ◇ injected env (0) from .env [2m// tip: ⌘ enable debugging { debug: true }[0m
-[2026-09-06T19:53:57.077Z] [INFO] [AutoDrain] Server-side queue drain worker started (gap: 180s)
-[2026-09-06T19:53:57.077Z] [INFO] [AutoQueue] Auto-approve and queue worker started (every 30s)
-[2026-09-06T19:53:57.079Z] [INFO] RecruitmentOS ICP server listening on http://localhost:3000
-[2026-09-06T19:54:27.085Z] [ERROR] (node:27407) Warning: SECURITY WARNING: The SSL modes 'prefer', 'require', and 'verify-ca' are treated as aliases for 'verify-full'.
-In the next major version (pg-connection-string v3.0.0 and pg v9.0.0), these modes will adopt standard libpq semantics, which have weaker security guarantees.
-
-To prepare for this change:
-- If you want the current behavior, explicitly use 'sslmode=verify-full'
-- If you want libpq compatibility now, use 'uselibpqcompat=true&sslmode=require'
-
-See https://www.postgresql.org/docs/current/libpq-ssl.html for libpq SSL mode definitions.
-(Use `node --trace-warnings ...` to show where the warning was created)
-[2026-09-06T19:56:57.959Z] [INFO] [AutoDrain] Could not acquire lease — another worker may be active.
-[2026-09-06T19:59:21.554Z] [INFO] ◇ injected env (0) from .env [2m// tip: ◈ secrets for agents [www.dotenvx.com][0m
-[2026-09-06T19:59:21.843Z] [INFO] [AutoDrain] Server-side queue drain worker started (gap: 180s)
-[2026-09-06T19:59:21.843Z] [INFO] [AutoQueue] Auto-approve and queue worker started (every 30s)
-[2026-09-06T19:59:21.844Z] [INFO] RecruitmentOS ICP server listening on http://localhost:3000
-[2026-09-06T19:59:32.959Z] [ERROR] (node:27634) Warning: SECURITY WARNING: The SSL modes 'prefer', 'require', and 'verify-ca' are treated as aliases for 'verify-full'.
-In the next major version (pg-connection-string v3.0.0 and pg v9.0.0), these modes will adopt standard libpq semantics, which have weaker security guarantees.
-
-To prepare for this change:
-- If you want the current behavior, explicitly use 'sslmode=verify-full'
-- If you want libpq compatibility now, use 'uselibpqcompat=true&sslmode=require'
-
-See https://www.postgresql.org/docs/current/libpq-ssl.html for libpq SSL mode definitions.
-(Use `node --trace-warnings ...` to show where the warning was created)
-[2026-09-06T20:02:38.564Z] [INFO] [AutoDrain] ✓ LIKE → browser-executed
-[2026-09-06T20:03:03.346Z] [INFO] ◇ injected env (0) from .env [2m// tip: ⌘ custom filepath { path: '/custom/path/.env' }[0m
-[2026-09-06T20:03:03.567Z] [INFO] [AutoDrain] Server-side queue drain worker started (gap: 180s)
-[2026-09-06T20:03:03.567Z] [INFO] [AutoQueue] Auto-approve and queue worker started (every 30s)
-[2026-09-06T20:03:03.568Z] [INFO] RecruitmentOS ICP server listening on http://localhost:3000
-[2026-09-06T20:03:13.087Z] [ERROR] (node:27833) Warning: SECURITY WARNING: The SSL modes 'prefer', 'require', and 'verify-ca' are treated as aliases for 'verify-full'.
-In the next major version (pg-connection-string v3.0.0 and pg v9.0.0), these modes will adopt standard libpq semantics, which have weaker security guarantees.
-
-To prepare for this change:
-- If you want the current behavior, explicitly use 'sslmode=verify-full'
-- If you want libpq compatibility now, use 'uselibpqcompat=true&sslmode=require'
-
-See https://www.postgresql.org/docs/current/libpq-ssl.html for libpq SSL mode definitions.
-(Use `node --trace-warnings ...` to show where the warning was created)
-[2026-09-06T20:05:47.489Z] [INFO] ◇ injected env (0) from .env [2m// tip: ⌘ suppress logs { quiet: true }[0m
-[2026-09-06T20:05:47.769Z] [INFO] [AutoDrain] Server-side queue drain worker started (gap: 180s)
-[2026-09-06T20:05:47.769Z] [INFO] [AutoQueue] Auto-approve and queue worker started (every 30s)
-[2026-09-06T20:05:47.771Z] [INFO] RecruitmentOS ICP server listening on http://localhost:3000
-[2026-09-06T20:06:00.527Z] [INFO] ◇ injected env (0) from .env [2m// tip: ◈ encrypted .env [www.dotenvx.com][0m
-[2026-09-06T20:06:00.796Z] [INFO] [AutoDrain] Server-side queue drain worker started (gap: 180s)
-[2026-09-06T20:06:00.796Z] [INFO] [AutoQueue] Auto-approve and queue worker started (every 30s)
-[2026-09-06T20:06:00.797Z] [INFO] RecruitmentOS ICP server listening on http://localhost:3000
-[2026-09-06T20:06:19.304Z] [ERROR] (node:27979) Warning: SECURITY WARNING: The SSL modes 'prefer', 'require', and 'verify-ca' are treated as aliases for 'verify-full'.
-In the next major version (pg-connection-string v3.0.0 and pg v9.0.0), these modes will adopt standard libpq semantics, which have weaker security guarantees.
-
-To prepare for this change:
-- If you want the current behavior, explicitly use 'sslmode=verify-full'
-- If you want libpq compatibility now, use 'uselibpqcompat=true&sslmode=require'
-
-See https://www.postgresql.org/docs/current/libpq-ssl.html for libpq SSL mode definitions.
-(Use `node --trace-warnings ...` to show where the warning was created)
-[2026-09-06T20:09:17.317Z] [INFO] [AutoDrain] ✓ COMMENT → EXECUTION_FAILED
-[2026-09-06T20:12:01.685Z] [INFO] [AutoDrain] Could not acquire lease — another worker may be active.
-[2026-09-06T20:15:16.707Z] [INFO] [AutoDrain] ✓ LIKE → EXECUTION_FAILED
-[2026-09-06T20:18:01.662Z] [INFO] [AutoDrain] Could not acquire lease — another worker may be active.
-[2026-09-06T20:21:28.147Z] [INFO] [AutoDrain] ✓ COMMENT → EXECUTION_FAILED
-[2026-09-06T20:24:01.736Z] [INFO] [AutoDrain] Could not acquire lease — another worker may be active.
-[2026-09-06T20:25:49.956Z] [INFO] ◇ injected env (0) from .env [2m// tip: ◈ secrets for agents [www.dotenvx.com][0m
-[2026-09-06T20:25:50.172Z] [INFO] [AutoDrain] Server-side queue drain worker started (gap: 180s)
-[2026-09-06T20:25:50.172Z] [INFO] [AutoQueue] Auto-approve and queue worker started (every 30s)
-[2026-09-06T20:25:50.174Z] [INFO] RecruitmentOS ICP server listening on http://localhost:3000
-[2026-09-06T20:26:20.185Z] [ERROR] (node:28996) Warning: SECURITY WARNING: The SSL modes 'prefer', 'require', and 'verify-ca' are treated as aliases for 'verify-full'.
-In the next major version (pg-connection-string v3.0.0 and pg v9.0.0), these modes will adopt standard libpq semantics, which have weaker security guarantees.
-
-To prepare for this change:
-- If you want the current behavior, explicitly use 'sslmode=verify-full'
-- If you want libpq compatibility now, use 'uselibpqcompat=true&sslmode=require'
-
-See https://www.postgresql.org/docs/current/libpq-ssl.html for libpq SSL mode definitions.
-(Use `node --trace-warnings ...` to show where the warning was created)
-[2026-09-06T20:27:26.602Z] [INFO] ◇ injected env (0) from .env [2m// tip: ⌘ suppress logs { quiet: true }[0m
-[2026-09-06T20:27:26.814Z] [INFO] [AutoDrain] Server-side queue drain worker started (gap: 180s)
-[2026-09-06T20:27:26.815Z] [INFO] [AutoQueue] Auto-approve and queue worker started (every 30s)
-[2026-09-06T20:27:26.816Z] [INFO] RecruitmentOS ICP server listening on http://localhost:3000
-[2026-09-06T20:27:48.888Z] [ERROR] (node:29293) Warning: SECURITY WARNING: The SSL modes 'prefer', 'require', and 'verify-ca' are treated as aliases for 'verify-full'.
-In the next major version (pg-connection-string v3.0.0 and pg v9.0.0), these modes will adopt standard libpq semantics, which have weaker security guarantees.
-
-To prepare for this change:
-- If you want the current behavior, explicitly use 'sslmode=verify-full'
-- If you want libpq compatibility now, use 'uselibpqcompat=true&sslmode=require'
-
-See https://www.postgresql.org/docs/current/libpq-ssl.html for libpq SSL mode definitions.
-(Use `node --trace-warnings ...` to show where the warning was created)
-[2026-09-06T20:30:43.512Z] [INFO] [AutoDrain] ✓ LIKE → EXECUTION_FAILED
-[2026-09-06T20:33:54.236Z] [INFO] [AutoDrain] ✓ COMMENT → EXECUTION_FAILED
+[2026-09-07T10:50:49.227Z] [INFO] AUDIT LOG: {"batchId":"4a617081-f8ba-46b3-b2e5-90c503df6072","tenantId":"00000000-0000-0000-0000-000000000001","icpDefinitionId":"6540a665-07f0-4952-9508-8f90d9bf10cf","filename":"opencli-linkedin-discovery-p1.csv","totalRows":10,"processedRows":10,"qualifiedCount":0,"rejectedCount":4,"reviewCount":6,"status":"COMPLETED","timestamp":"2026-09-07T10:50:49.227Z"} HASH: bc842905e1a3b27cf1e6b047f09005e459d74848697bd9035f50a6f3e41637e7
+[2026-09-07T10:51:34.536Z] [INFO] [AutoQueue] Found 1 pending drafts. Auto-approving...
+[2026-09-07T10:51:41.213Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 838fddee-a837-457e-bb99-6934817a99ec
+[2026-09-07T10:53:06.132Z] [INFO] [AutoQueue] Found 5 pending drafts. Auto-approving...
+[2026-09-07T10:53:12.681Z] [INFO] [AutoQueue] Automatically queued COMMENT for draft 5e4926b1-ae2e-4993-bef9-0be648a2d984
+[2026-09-07T10:53:19.439Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 82a8ae4e-63c9-4944-87d0-76f9eb8e3450
+[2026-09-07T10:53:21.666Z] [ERROR] [AutoDrain] ✗ LIKE FAILED → SELECTOR_MISMATCH
+[2026-09-07T10:53:25.812Z] [INFO] [AutoQueue] Automatically queued COMMENT for draft fcaa1909-781d-4a61-8148-79ebdb31e13f
+[2026-09-07T10:53:32.514Z] [INFO] [AutoQueue] Automatically queued LIKE for draft f34bf120-07e2-4823-8995-6dcae1702f7c
+[2026-09-07T10:53:38.974Z] [INFO] [AutoQueue] Automatically queued LIKE for draft de0f4f12-5257-41ae-b89e-d0d810972d69
+[2026-09-07T10:56:30.386Z] [ERROR] [AutoDrain] ✗ COMMENT FAILED → SELECTOR_MISMATCH
+[2026-09-07T10:57:29.411Z] [INFO] ◇ injected env (0) from .env [2m// tip: ◈ encrypted .env [www.dotenvx.com][0m
+[2026-09-07T10:57:29.416Z] [INFO] [AutoDrain] Server-side queue drain worker started (gap: 180s)
+[2026-09-07T10:57:29.416Z] [INFO] [AutoQueue] Auto-approve and queue worker started (every 30s)
+[2026-09-07T10:57:29.419Z] [INFO] RecruitmentOS ICP server listening on http://localhost:3000
+[2026-09-07T10:57:40.865Z] [INFO] ◇ injected env (0) from .env [2m// tip: ⌘ multiple files { path: ['.env.local', '.env'] }[0m
+[2026-09-07T10:57:40.870Z] [INFO] [AutoDrain] Server-side queue drain worker started (gap: 180s)
+[2026-09-07T10:57:40.870Z] [INFO] [AutoQueue] Auto-approve and queue worker started (every 30s)
+[2026-09-07T10:57:40.871Z] [INFO] RecruitmentOS ICP server listening on http://localhost:3000
+[2026-09-07T10:57:49.816Z] [INFO] ◇ injected env (0) from .env [2m// tip: ◈ secrets for agents [www.dotenvx.com][0m
+[2026-09-07T10:57:49.822Z] [INFO] [AutoDrain] Server-side queue drain worker started (gap: 180s)
+[2026-09-07T10:57:49.822Z] [INFO] [AutoQueue] Auto-approve and queue worker started (every 30s)
+[2026-09-07T10:57:49.823Z] [INFO] RecruitmentOS ICP server listening on http://localhost:3000
+[2026-09-07T10:57:59.815Z] [INFO] ◇ injected env (0) from .env [2m// tip: ⌁ auth for agents [www.vestauth.com][0m
+[2026-09-07T10:57:59.820Z] [INFO] [AutoDrain] Server-side queue drain worker started (gap: 180s)
+[2026-09-07T10:57:59.820Z] [INFO] [AutoQueue] Auto-approve and queue worker started (every 30s)
+[2026-09-07T10:57:59.821Z] [INFO] RecruitmentOS ICP server listening on http://localhost:3000
+[2026-09-07T10:58:13.265Z] [INFO] ◇ injected env (0) from .env [2m// tip: ◈ secrets for agents [www.dotenvx.com][0m
+[2026-09-07T10:58:13.276Z] [INFO] [AutoDrain] Server-side queue drain worker started (gap: 180s)
+[2026-09-07T10:58:13.276Z] [INFO] [AutoQueue] Auto-approve and queue worker started (every 30s)
+[2026-09-07T10:58:13.278Z] [INFO] RecruitmentOS ICP server listening on http://localhost:3000
+[2026-09-07T10:58:53.491Z] [INFO] ◇ injected env (0) from .env [2m// tip: ⌘ enable debugging { debug: true }[0m
+[2026-09-07T10:58:53.501Z] [INFO] [AutoDrain] Server-side queue drain worker started (gap: 180s)
+[2026-09-07T10:58:53.501Z] [INFO] [AutoQueue] Auto-approve and queue worker started (every 30s)
+[2026-09-07T10:58:53.502Z] [INFO] RecruitmentOS ICP server listening on http://localhost:3000
+[2026-09-07T11:02:09.766Z] [INFO] [AutoDrain] ✓ LIKE → browser-executed
+[2026-09-07T11:02:10.032Z] [INFO] [AutoDrain] Found paired action for same prospect. Processing immediately...
+[2026-09-07T11:02:30.225Z] [INFO] [AutoDrain] ✓ COMMENT (paired) → browser-executed
+[2026-09-07T11:05:03.642Z] [INFO] [AutoDrain] ✓ LIKE → browser-executed
+[2026-09-07T11:05:03.968Z] [INFO] [AutoDrain] Found paired action for same prospect. Processing immediately...
+[2026-09-07T11:05:23.445Z] [INFO] [AutoDrain] ✓ COMMENT (paired) → browser-executed
+[2026-09-07T11:08:09.826Z] [INFO] [AutoDrain] ✓ LIKE → browser-executed
+[2026-09-07T11:08:10.747Z] [INFO] [AutoDrain] Found paired action for same prospect. Processing immediately...
+[2026-09-07T11:08:30.616Z] [INFO] [AutoDrain] ✓ COMMENT (paired) → browser-executed
+[2026-09-07T11:11:03.749Z] [INFO] [AutoDrain] ✓ LIKE → browser-executed
+[2026-09-07T11:11:04.015Z] [INFO] [AutoDrain] Found paired action for same prospect. Processing immediately...
+[2026-09-07T11:11:22.269Z] [INFO] [AutoDrain] ✓ COMMENT (paired) → browser-executed
+[2026-09-07T11:14:10.943Z] [INFO] [AutoDrain] ✓ LIKE → browser-executed
+[2026-09-07T11:14:11.286Z] [INFO] [AutoDrain] Found paired action for same prospect. Processing immediately...
+[2026-09-07T11:14:30.520Z] [INFO] [AutoDrain] ✓ COMMENT (paired) → browser-executed
+[2026-09-07T11:17:03.693Z] [INFO] [AutoDrain] ✓ LIKE → browser-executed
+[2026-09-07T11:17:03.958Z] [INFO] [AutoDrain] Found paired action for same prospect. Processing immediately...
+[2026-09-07T11:17:22.433Z] [INFO] [AutoDrain] ✓ COMMENT (paired) → browser-executed

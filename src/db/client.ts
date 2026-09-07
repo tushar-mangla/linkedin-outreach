@@ -7,8 +7,12 @@ import * as schema from './schema.js';
 
 dotenv.config();
 
+const connectionString = process.env.DATABASE_URL
+    ? process.env.DATABASE_URL.replace(/([?&])sslmode=require\b/g, '$1sslmode=verify-full')
+    : undefined;
+
 const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
+    connectionString,
     max: 20,
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 10000,
