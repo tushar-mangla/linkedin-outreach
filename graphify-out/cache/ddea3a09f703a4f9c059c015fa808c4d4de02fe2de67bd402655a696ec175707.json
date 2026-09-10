@@ -1,0 +1,1 @@
+{"nodes": [{"id": "src_db_db_adapter_ts", "label": "db-adapter.ts", "file_type": "code", "source_file": "src/db/db-adapter.ts", "source_location": "L1"}], "edges": [{"source": "src_db_db_adapter_ts", "target": "src_db_types_ts", "relation": "imports_from", "confidence": "EXTRACTED", "source_file": "src/db/db-adapter.ts", "source_location": "L2", "weight": 1.0}]}
