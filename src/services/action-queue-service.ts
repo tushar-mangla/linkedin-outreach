@@ -8,6 +8,8 @@ import { SafetyGate } from './safety-gate.js';
 import type { SafetyActionInput } from './engagement/execution-contracts.js';
 import { randomUUID } from 'node:crypto';
 import { redactForAudit } from './safety-resolver.js';
+import { isTransientDbError } from '../db/retry.js';
+
 
 export interface ActionQueueServiceOptions {
   db: DBAdapter;
@@ -53,6 +55,17 @@ export class ActionQueueService {
     workerId: string,
     leaseToken?: string
   ): Promise<{ processed: boolean; action?: ScheduledAction; result?: ActionResult; reason?: string }> {
+    // 0. Recover stale claims older than lease TTL
+    if (this.db.recoverStaleClaims) {
+      try {
+        await this.db.recoverStaleClaims(15 * 60 * 1000, tenantId, accountId);
+      } catch (err) {
+        if (!isTransientDbError(err)) {
+          console.warn('[ActionQueueService] Stale claim recovery warning:', (err as Error).message);
+        }
+      }
+    }
+
     // 1. Check Lease Guard
     if (leaseToken) {
       const activeLease = await this.leaseService.getActiveLease(tenantId, accountId);
@@ -63,48 +76,96 @@ export class ActionQueueService {
 
     // 2. Claim Next Scheduled Action (atomic, token-bound lease on the row)
     const claimToken = randomUUID();
-    const action = await this.db.claimNextScheduledAction(tenantId, accountId, workerId, claimToken);
+    let action: ScheduledAction | undefined;
+    try {
+      action = await this.db.claimNextScheduledAction(tenantId, accountId, workerId, claimToken);
+    } catch (claimErr) {
+      if (isTransientDbError(claimErr)) {
+        return { processed: false, reason: 'DB_RETRYABLE' };
+      }
+      throw claimErr;
+    }
     if (!action) {
       return { processed: false, reason: 'NO_PENDING_ACTIONS' };
     }
 
-    if (action.actionType === 'like' || action.actionType === 'comment') {
-      const safety = await this.resolveSafety(action, tenantId);
-      if (!safety || safety.tenantId !== tenantId || safety.actionType !== action.actionType.toUpperCase() || safety.postHash !== action.postHash || safety.revisionId !== action.revisionId) {
-        await this.db.updateScheduledActionResult(tenantId, action.id, { status: 'FAILED', outcomeLabel: 'failed', errorCode: 'SAFETY_CONTEXT_REQUIRED' });
-        return { processed: true, action, reason: 'SAFETY_CONTEXT_REQUIRED' };
+    let reservationId: string | undefined = undefined;
+    try {
+      if (action.actionType === 'comment' && !await this.db.isCommentSlotOwner(tenantId, accountId, action.id)) {
+        await this.db.updateScheduledActionResult(tenantId, action.id, { status: 'FAILED', outcomeLabel: 'refused', errorCode: 'COMMENT_SLOT_OWNER_REQUIRED' });
+        return { processed: true, action, reason: 'COMMENT_SLOT_OWNER_REQUIRED' };
       }
-      try {
-        this.safetyGate.assertActionSafe(safety);
-      } catch (error) {
-        await this.db.updateScheduledActionResult(tenantId, action.id, { status: 'FAILED', outcomeLabel: 'failed', errorCode: (error as Error).message });
-        await this.logger.record({ action: 'action.refused', actor: workerId, tenantId, entityType: 'scheduled_action', entityId: action.id, details: redactForAudit({ code: (error as Error).message, claimToken }) });
-        return { processed: true, action, reason: (error as Error).message };
+
+      if (action.actionType === 'like' || action.actionType === 'comment') {
+        const safety = await this.resolveSafety(action, tenantId);
+        if (!safety || safety.tenantId !== tenantId || safety.actionType !== action.actionType.toUpperCase() || safety.postHash !== action.postHash || safety.revisionId !== action.revisionId) {
+          await this.db.finalizeCommentAction(tenantId, action.id, { status: 'FAILED', outcomeLabel: 'failed', errorCode: 'SAFETY_CONTEXT_REQUIRED' });
+          return { processed: true, action, reason: 'SAFETY_CONTEXT_REQUIRED' };
+        }
+        try {
+          this.safetyGate.assertActionSafe(safety);
+        } catch (error) {
+          await this.db.finalizeCommentAction(tenantId, action.id, { status: 'FAILED', outcomeLabel: 'failed', errorCode: (error as Error).message });
+          await this.logger.record({ action: 'action.refused', actor: workerId, tenantId, entityType: 'scheduled_action', entityId: action.id, details: redactForAudit({ code: (error as Error).message, claimToken }) });
+          return { processed: true, action, reason: (error as Error).message };
+        }
+
+        if (this.db.checkEngagementCooldown) {
+          const cooldownCheck = await this.db.checkEngagementCooldown(tenantId, action.prospectId, action.actionType);
+          if (!cooldownCheck.allowed) {
+            await this.db.finalizeCommentAction(tenantId, action.id, { status: 'FAILED', outcomeLabel: 'refused', errorCode: 'COOLDOWN_ACTIVE' });
+            await this.logger.record({ action: 'action.refused', actor: workerId, tenantId, entityType: 'scheduled_action', entityId: action.id, details: redactForAudit({ code: 'COOLDOWN_ACTIVE', reason: cooldownCheck.reason, claimToken }) });
+            return { processed: true, action, reason: 'COOLDOWN_ACTIVE' };
+          }
+        }
       }
-    }
 
-    // 3. Check Daily Budget Reservation
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const reservationId = await this.budgetService.reserveBudget(
-      tenantId,
-      accountId,
-      action.actionType,
-      today
-    );
-
-    if (!reservationId) {
-      // Out of daily quota: revert claim back to PENDING for subsequent window
-      await this.db.updateScheduledActionResult(tenantId, action.id, { status: 'PENDING', errorCode: 'BUDGET_EXCEEDED' });
-      await this.logger.record({
-        action: 'action.budget_exceeded',
-        actor: workerId,
+      // 3. Check Daily Budget Reservation
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      reservationId = await this.budgetService.reserveBudget(
         tenantId,
-        entityType: 'scheduled_action',
-        entityId: action.id,
-        details: redactForAudit({ actionType: action.actionType, date: today.toISOString(), claimToken }),
-      });
-      return { processed: false, action, reason: 'BUDGET_EXCEEDED' };
+        accountId,
+        action.actionType,
+        today
+      );
+
+      if (!reservationId) {
+        // Out of daily quota: revert claim back to PENDING for subsequent window
+        await this.db.updateScheduledActionResult(tenantId, action.id, { status: 'PENDING', errorCode: 'BUDGET_EXCEEDED' });
+        await this.logger.record({
+          action: 'action.budget_exceeded',
+          actor: workerId,
+          tenantId,
+          entityType: 'scheduled_action',
+          entityId: action.id,
+          details: redactForAudit({ actionType: action.actionType, date: today.toISOString(), claimToken }),
+        });
+        return { processed: false, action, reason: 'BUDGET_EXCEEDED' };
+      }
+    } catch (preDispatchError: unknown) {
+      if (reservationId) {
+        try {
+          await this.budgetService.releaseBudget(reservationId);
+        } catch {
+          // Ignore budget release failure on transient error
+        }
+      }
+
+      if (isTransientDbError(preDispatchError)) {
+        // Pre-dispatch transient error: revert to PENDING with failureReason DB_RETRYABLE
+        try {
+          await this.db.updateScheduledActionResult(tenantId, action.id, {
+            status: 'PENDING',
+            errorCode: 'DB_TRANSIENT',
+          });
+        } catch (revertErr) {
+          console.warn('[ActionQueueService] Failed to revert transiently failed action to PENDING:', (revertErr as Error).message);
+        }
+        return { processed: false, action, reason: 'DB_RETRYABLE' };
+      }
+
+      throw preDispatchError;
     }
 
     // 4. Dispatch to Executor
@@ -152,7 +213,7 @@ export class ActionQueueService {
 
       if (result.success) {
         await this.budgetService.commitAction(reservationId);
-        await this.db.updateScheduledActionResult(tenantId, action.id, { status: 'COMPLETED', outcomeLabel: result.outcomeLabel });
+        await this.db.finalizeCommentAction(tenantId, action.id, { status: 'COMPLETED', outcomeLabel: result.outcomeLabel }, workerId);
         await this.logger.record({
           action: `action.${action.actionType}.completed`,
           actor: workerId,
@@ -168,9 +229,9 @@ export class ActionQueueService {
            await this.db.createManualTask({ tenantId, scheduledActionId: action.id, actionType: action.actionType.toUpperCase() as 'LIKE' | 'COMMENT' });
            // Keep the action CLAIMED (non-claimable) until the manual task resolves it.
            // Resetting to PENDING here would allow a second worker to re-claim it.
-           await this.db.updateScheduledActionResult(tenantId, action.id, { status: 'CLAIMED', outcomeLabel: result.outcomeLabel, errorCode: result.errorCode });
+            await this.db.updateScheduledActionResult(tenantId, action.id, { status: 'CLAIMED', outcomeLabel: result.outcomeLabel, errorCode: result.errorCode });
          } else {
-           await this.db.updateScheduledActionResult(tenantId, action.id, { status: 'FAILED', outcomeLabel: result.outcomeLabel, errorCode: result.errorCode });
+            await this.db.finalizeCommentAction(tenantId, action.id, { status: 'FAILED', outcomeLabel: result.outcomeLabel, errorCode: result.errorCode });
          }
         await this.logger.record({
           action: `action.${action.actionType}.failed`,
@@ -183,8 +244,10 @@ export class ActionQueueService {
         return { processed: true, action, result, reason: 'EXECUTION_FAILED' };
       }
     } catch (error: any) {
-      await this.budgetService.releaseBudget(reservationId);
-       await this.db.updateScheduledActionResult(tenantId, action.id, { status: 'UNCERTAIN', outcomeLabel: 'uncertain', errorCode: 'EXECUTION_UNCERTAIN' });
+      if (reservationId) {
+        await this.budgetService.releaseBudget(reservationId);
+      }
+      await this.db.finalizeCommentAction(tenantId, action.id, { status: 'UNCERTAIN', outcomeLabel: 'uncertain', errorCode: 'EXECUTION_UNCERTAIN' });
       await this.logger.record({
         action: `action.${action.actionType}.uncertain`,
         actor: workerId,

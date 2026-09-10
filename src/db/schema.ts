@@ -203,6 +203,7 @@ export const engagementPosts = pgTable('engagement_posts', {
   tenantId: uuid('tenant_id').notNull(),
   prospectId: uuid('prospect_id').notNull().references(() => prospects.id),
   postUrl: text('post_url').notNull(),
+  canonicalPostIdentifier: text('canonical_post_identifier').notNull(),
   postText: text('post_text').notNull(),
   authorName: varchar('author_name', { length: 255 }).notNull().default(''),
   publishedAt: timestamp('published_at'),
@@ -210,7 +211,7 @@ export const engagementPosts = pgTable('engagement_posts', {
   contentHash: varchar('content_hash', { length: 64 }).notNull(),
   createdAt: timestamp('created_at').defaultNow().notNull(),
 }, (table) => ({
-  tenantPostUrlIdx: uniqueIndex('tenant_post_url_idx').on(table.tenantId, table.postUrl),
+  tenantCanonicalPostIdx: uniqueIndex('tenant_canonical_post_idx').on(table.tenantId, table.canonicalPostIdentifier),
 }));
 
 export const engagementDrafts = pgTable('engagement_drafts', {
@@ -314,4 +315,30 @@ export const engagementHistory = pgTable('engagement_history', {
   actionType: engagementActionTypeEnum('action_type').notNull(),
   interactedAt: timestamp('interacted_at').defaultNow().notNull(),
   operatorId: varchar('operator_id', { length: 255 }).notNull(),
-});
+  scheduledActionId: uuid('scheduled_action_id').references(() => scheduledActions.id),
+}, (table) => ({
+  scheduledActionUniqueIdx: uniqueIndex('engagement_history_scheduled_action_id_idx').on(table.scheduledActionId),
+}));
+
+// ─── Feature: Account-level post comment mapping ──────────────────────────────
+// Strict 1-to-1 mapping of (tenant, account, post) → comment status.
+// This is the single source of truth for whether we have commented on a post.
+// Status lifecycle: PENDING → COMPLETED | FAILED
+// - PENDING: comment is queued and has not run yet
+// - COMPLETED: comment was successfully posted on LinkedIn
+// - FAILED: the comment attempt failed (re-queuing is allowed)
+export const accountPostComments = pgTable('account_post_comments', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull(),
+  accountId: uuid('account_id').notNull(),
+  postHash: varchar('post_hash', { length: 64 }).notNull(),
+  canonicalPostIdentifier: text('canonical_post_identifier').notNull(),
+  postUrl: text('post_url').notNull(),
+  status: varchar('status', { length: 20 }).notNull().default('PENDING'), // PENDING | COMPLETED | FAILED | UNCERTAIN
+  scheduledActionId: uuid('scheduled_action_id'), // link back to the action that owns this slot
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+}, (table) => ({
+  // Guarantees at most one row per account+post — the core deduplication constraint
+  accountCanonicalPostUniqueIdx: uniqueIndex('account_canonical_post_unique_idx').on(table.tenantId, table.accountId, table.canonicalPostIdentifier),
+}));

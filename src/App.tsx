@@ -1,5 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { EngagementReview } from './components/EngagementReview';
+import { RolesPanel } from './components/RolesPanel';
+import { UploadPanel } from './components/UploadPanel';
+import { EngagementPanel } from './components/EngagementPanel';
+import { ExportPanel } from './components/ExportPanel';
 
 export interface RoleDef {
   id?: string;
@@ -39,12 +43,9 @@ export function App() {
   const [prospects, setProspects] = useState<ProspectRow[]>([]);
   const [prospectsState, setProspectsState] = useState<'loading' | 'ready' | 'empty' | 'error'>('loading');
 
-  const [csvText, setCsvText] = useState('');
   const [statusMessage, setStatusMessage] = useState('Loading server state…');
   const [drafts, setDrafts] = useState<any[]>([]);
   const [queueActions, setQueueActions] = useState<any[]>([]);
-  const [queueFilter, setQueueFilter] = useState<'ALL' | 'LIKE' | 'COMMENT'>('ALL');
-  const [statusFilter, setStatusFilter] = useState<'ALL' | 'PENDING' | 'COMPLETED' | 'FAILED'>('ALL');
   const [controls, setControls] = useState<any[]>([]);
   const [auditEvents, setAuditEvents] = useState<any[]>([]);
   const [actionStatusByDraft, setActionStatusByDraft] = useState<Record<string, 'executing' | 'executed' | 'failed'>>({});
@@ -52,30 +53,6 @@ export function App() {
   const [actionAccountId, setActionAccountId] = useState('00000000-0000-0000-0000-000000000002');
   const [actionMode, setActionMode] = useState<'BROWSER' | 'SIMULATE' | 'MANUAL'>('BROWSER');
   const [selectedProspectId, setSelectedProspectId] = useState<string>('');
-  const [newProspectName, setNewProspectName] = useState('');
-  const [newProspectTitle, setNewProspectTitle] = useState('');
-  const [newProspectCompany, setNewProspectCompany] = useState('');
-  const [newProspectLinkedinUrl, setNewProspectLinkedinUrl] = useState('');
-  const [newProspectLocation, setNewProspectLocation] = useState('');
-  const [discovering, setDiscovering] = useState(false);
-  const [selectedCountries, setSelectedCountries] = useState<string[]>(['US']);
-  const [selectedPositions, setSelectedPositions] = useState<string[]>(['Director']);
-  const [searchKeyword, setSearchKeyword] = useState<string>('recruitment');
-  const [searchPage, setSearchPage] = useState<number>(1);
-  const [discoveryResult, setDiscoveryResult] = useState<{
-    status: 'completed' | 'rate_limited' | 'failed';
-    page?: number;
-    nextPage?: number;
-    discovered: number;
-    uniqueIngested: number;
-    duplicatesSkipped: number;
-    qualified: number;
-    reviewRequired: number;
-    disqualified: number;
-    retryAfter?: number;
-    campaign?: { id: string; name: string };
-  } | null>(null);
-  const [discoveryError, setDiscoveryError] = useState('');
   const [campaignsList, setCampaignsList] = useState<Array<{ id: string; name: string; enrolledCount: number }>>([]);
   const [selectedCampaignId, setSelectedCampaignId] = useState<string>('');
   const [campaignDrafts, setCampaignDrafts] = useState<Record<string, any[]>>({});
@@ -186,29 +163,13 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (activeTab === 'engagement') {
+    if (activeTab === 'engagement' || activeTab === 'pipeline') {
       refreshEngagement();
-      refreshProspects();
-    }
-    if (activeTab === 'pipeline') {
       refreshProspects();
     }
   }, [activeTab]);
 
-  async function refreshDiscoveryState() {
-    try {
-      const res = await fetch('/api/prospects/discovery-state');
-      if (res.ok) {
-        const data = await res.json();
-        if (typeof data.nextPage === 'number') setSearchPage(data.nextPage);
-        if (Array.isArray(data.countries) && data.countries.length > 0) setSelectedCountries(data.countries);
-        if (Array.isArray(data.positions) && data.positions.length > 0) setSelectedPositions(data.positions);
-        if (typeof data.keyword === 'string' && data.keyword.trim()) setSearchKeyword(data.keyword);
-      }
-    } catch {
-      // Server offline or unavailable seam
-    }
-  }
+
 
   useEffect(() => {
     fetch('/health')
@@ -220,83 +181,9 @@ export function App() {
       .catch(() => {
         setStatusMessage('API unavailable: cannot reach server. No local fallback data is shown.');
       });
-    refreshDiscoveryState();
   }, []);
 
-  const handleCreateRole = async () => {
-    try {
-      const parsedCriteria = JSON.parse(criteriaJson);
-      const res = await fetch('/api/icps', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: roleName, criteria: parsedCriteria }),
-      });
-      if (res.ok) {
-        const saved = await res.json();
-        setStatusMessage(`Role "${saved.name ?? roleName}" saved on the server.`);
-      } else {
-        setStatusMessage(`Role save refused (${res.status}): ${await res.text()}`);
-      }
-    } catch (e: any) {
-      alert(`Invalid JSON format in criteria: ${e.message}`);
-    }
-  };
 
-  const handleUploadCsv = async () => {
-    if (!csvText.trim()) {
-      alert('Please paste or drag a CSV file first.');
-      return;
-    }
-    try {
-      setStatusMessage('Resolving target role for import…');
-      let icps: any[] = [];
-      const icpRes = await fetch('/api/icps');
-      if (icpRes.ok) {
-        const body = await icpRes.json();
-        if (Array.isArray(body)) icps = body;
-      }
-      let icpDefinitionId = icps[0]?.id;
-      if (!icpDefinitionId) {
-        const created = await fetch('/api/icps', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: roleName || 'Imported Role', criteria: JSON.parse(criteriaJson) }),
-        });
-        if (!created.ok) {
-          setStatusMessage(`Import refused: could not resolve a role (${created.status}): ${await created.text()}`);
-          return;
-        }
-        icpDefinitionId = (await created.json()).id;
-      }
-      setStatusMessage('Uploading CSV batch to the server…');
-      const upload = await fetch('/api/imports', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ csv: csvText, icpDefinitionId, filename: 'prospects.csv' }),
-      });
-      if (!upload.ok) {
-        setStatusMessage(`Import refused (${upload.status}): ${await upload.text()}`);
-        return;
-      }
-      const { batch } = await upload.json();
-      setStatusMessage(`Processing import batch ${batch.id}…`);
-      const processed = await fetch(`/api/imports/${batch.id}/process`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ csv: csvText }),
-      });
-      if (!processed.ok) {
-        setStatusMessage(`Import processing refused (${processed.status}): ${await processed.text()}`);
-        return;
-      }
-      const result = await processed.json();
-      setStatusMessage(`Imported batch ${result.id ?? batch.id}: ${result.processedRows ?? 'unknown'} rows processed.`);
-      await refreshProspects();
-      setActiveTab('pipeline');
-    } catch (e: any) {
-      setStatusMessage(`Import failed: ${e.message}`);
-    }
-  };
 
   const handleDeleteProspect = async (prospect: ProspectRow) => {
     if (!window.confirm(`Delete ${prospect.name} and all associated engagement data?`)) return;
@@ -310,159 +197,6 @@ export function App() {
       await refreshProspects();
     } catch (error: any) {
       setStatusMessage(`Delete failed: ${error.message}`);
-    }
-  };
-
-  const qualifiedCount = prospects.filter(
-    c => c.currentStage === 'EVALUATED' || c.currentStage === 'READY_FOR_CAMPAIGN'
-  ).length;
-  const rejectedCount = prospects.filter(
-    c => c.currentStage === 'REJECTED' || c.currentStage === 'FILTERED_OUT'
-  ).length;
-  const readyProspects = prospects.filter(c => c.currentStage === 'READY_FOR_CAMPAIGN');
-
-  const escapeCsvField = (value: string) => `"${value.replace(/"/g, '""')}"`;
-
-  const handleAddProspect = async () => {
-    const name = newProspectName.trim();
-    const title = newProspectTitle.trim();
-    const company = newProspectCompany.trim();
-    const linkedinUrl = newProspectLinkedinUrl.trim();
-    const location = newProspectLocation.trim();
-    if (!name || !title || !company || !linkedinUrl) {
-      alert('Please fill in Full Name, Headline / Title, Company, and LinkedIn Profile URL.');
-      return;
-    }
-    try {
-      new URL(linkedinUrl);
-    } catch {
-      alert('LinkedIn Profile URL must be a valid URL (e.g. https://www.linkedin.com/in/someone).');
-      return;
-    }
-    try {
-      setStatusMessage('Resolving target role for import…');
-      let icps: any[] = [];
-      const icpRes = await fetch('/api/icps');
-      if (icpRes.ok) {
-        const body = await icpRes.json();
-        if (Array.isArray(body)) icps = body;
-      }
-      let icpDefinitionId = icps[0]?.id;
-      if (!icpDefinitionId) {
-        const created = await fetch('/api/icps', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: roleName || 'Imported Role', criteria: JSON.parse(criteriaJson) }),
-        });
-        if (!created.ok) {
-          setStatusMessage(`Add prospect refused: could not resolve a role (${created.status}): ${await created.text()}`);
-          return;
-        }
-        icpDefinitionId = (await created.json()).id;
-      }
-      const header = 'name,title,company,location,linkedinUrl';
-      const row = [name, title, company, location, linkedinUrl].map(escapeCsvField).join(',');
-      const csv = `${header}\n${row}\n`;
-      setStatusMessage('Adding prospect to the server…');
-      const upload = await fetch('/api/imports', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ csv, icpDefinitionId, filename: 'prospect-manual-add.csv' }),
-      });
-      if (!upload.ok) {
-        setStatusMessage(`Add prospect refused (${upload.status}): ${await upload.text()}`);
-        return;
-      }
-      const { batch } = await upload.json();
-      const processed = await fetch(`/api/imports/${batch.id}/process`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ csv }),
-      });
-      if (!processed.ok) {
-        setStatusMessage(`Add prospect processing refused (${processed.status}): ${await processed.text()}`);
-        return;
-      }
-      setNewProspectName('');
-      setNewProspectTitle('');
-      setNewProspectCompany('');
-      setNewProspectLinkedinUrl('');
-      setNewProspectLocation('');
-      setStatusMessage(`Prospect "${name}" added. Refreshing list…`);
-      await refreshProspects();
-    } catch (e: any) {
-      setStatusMessage(`Add prospect failed: ${e.message}`);
-    }
-  };
-  const handleDiscoverProspects = async () => {
-    if (discovering) return;
-    setDiscovering(true);
-    setDiscoveryError('');
-    setDiscoveryResult(null);
-    setStatusMessage('Discovering prospects through OpenCLI LinkedIn...');
-    try {
-      const res = await fetch('/api/prospects/discover', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          countries: selectedCountries,
-          positions: selectedPositions,
-          keyword: searchKeyword,
-          page: searchPage,
-        }),
-      });
-      const report = await res.json();
-      if (!res.ok || report.status !== 'completed') {
-        const retryMessage = report.status === 'rate_limited'
-          ? ` Google limited discovery${report.retryAfter ? `; retry in ${Math.ceil(report.retryAfter / 1000)} seconds` : ''}.`
-          : '';
-        setDiscoveryResult({
-          status: report.status === 'rate_limited' ? 'rate_limited' : 'failed',
-          discovered: report.discovered ?? 0,
-          uniqueIngested: report.uniqueIngested ?? 0,
-          duplicatesSkipped: report.duplicatesSkipped ?? 0,
-          qualified: report.qualified ?? 0,
-          reviewRequired: report.reviewRequired ?? 0,
-          disqualified: report.disqualified ?? 0,
-          retryAfter: report.retryAfter,
-        });
-        setDiscoveryError(`Discovery ${report.status === 'rate_limited' ? 'rate limited' : 'failed'}.${retryMessage}`);
-        setStatusMessage(`Discovery did not run. Prior prospect state is preserved.${retryMessage}`);
-        return;
-      }
-      const completedPage = report.page ?? searchPage;
-      const nextPage = report.nextPage ?? (completedPage + 1);
-      const createdCampaign = report.campaign as { id: string; name: string } | null | undefined;
-      setDiscoveryResult({
-        status: 'completed',
-        page: completedPage,
-        nextPage,
-        discovered: report.discovered ?? 0,
-        uniqueIngested: report.uniqueIngested ?? 0,
-        duplicatesSkipped: report.duplicatesSkipped ?? 0,
-        qualified: report.qualified ?? 0,
-        reviewRequired: report.reviewRequired ?? 0,
-        disqualified: report.disqualified ?? 0,
-        campaign: createdCampaign ?? undefined,
-      });
-      setSearchPage(nextPage);
-      setStatusMessage(
-        `Discovery complete for Page ${completedPage}: ${report.discovered ?? 0} found, ${report.uniqueIngested ?? 0} ingested. Auto-advanced to Page ${nextPage} for next run.`
-      );
-      // Auto-navigate to the created campaign in Pipeline tab
-      if (createdCampaign?.id) {
-        await refreshCampaigns();
-        setSelectedCampaignId(createdCampaign.id);
-        setActiveTab('pipeline');
-        await refreshProspects(createdCampaign.id);
-      } else {
-        await refreshProspects();
-      }
-    } catch (e: any) {
-      setDiscoveryError(`Discovery failed: ${e.message}`);
-      setStatusMessage(`Discovery failed: ${e.message}`);
-    } finally {
-      setDiscovering(false);
     }
   };
 
@@ -761,23 +495,13 @@ export function App() {
     }
   };
 
-  const handleKillSwitch = async (accountId: string, actionType: string, active: boolean) => {
-    try {
-      const response = await fetch('/api/execution/kill-switches', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ accountId, actionType, active }),
-      });
-      if (!response.ok) {
-        setStatusMessage(`Kill-switch refused (${response.status}): ${await response.text()}`);
-        return;
-      }
-      setStatusMessage(`Kill-switch ${active ? 'activated' : 'cleared'} for ${actionType}.`);
-      await refreshEngagement();
-    } catch (e: any) {
-      setStatusMessage(`Kill-switch failed: ${e.message}`);
-    }
-  };
+  const qualifiedCount = prospects.filter(
+    c => c.currentStage === 'EVALUATED' || c.currentStage === 'READY_FOR_CAMPAIGN'
+  ).length;
+  const rejectedCount = prospects.filter(
+    c => c.currentStage === 'REJECTED' || c.currentStage === 'FILTERED_OUT'
+  ).length;
+  const readyProspects = prospects.filter(c => c.currentStage === 'READY_FOR_CAMPAIGN');
 
   return (
     <div className="app-shell">
@@ -862,293 +586,28 @@ export function App() {
 
         {/* TAB CONTENT: ROLES */}
         {activeTab === 'roles' && (
-          <div className="content-grid">
-            <div className="panel intro-panel">
-              <span className="chip">STEP 1</span>
-              <h2>Define Hiring Criteria & Criteria Rules</h2>
-              <p>
-                Set target job titles, required skills, target seniority levels, and hard exclusions
-                (e.g., agency recruiters or non-target locations).
-              </p>
-            </div>
-            <div className="panel">
-              <div className="panel-heading">
-                <h3>Recruitment Role Definition</h3>
-                <span className="chip">JSON SCHEMA</span>
-              </div>
-              <label>
-                Role Name
-                <input
-                  type="text"
-                  value={roleName}
-                  onChange={e => setRoleName(e.target.value)}
-                />
-              </label>
-              <br />
-              <label>
-                Hiring Criteria JSON
-                <textarea
-                  className="criteria"
-                  value={criteriaJson}
-                  onChange={e => setCriteriaJson(e.target.value)}
-                />
-              </label>
-              <button className="primary" onClick={handleCreateRole}>
-                Save Recruitment Role Criteria ➔
-              </button>
-            </div>
-          </div>
+          <RolesPanel
+            roleName={roleName}
+            setRoleName={setRoleName}
+            criteriaJson={criteriaJson}
+            setCriteriaJson={setCriteriaJson}
+            setStatusMessage={setStatusMessage}
+          />
         )}
 
         {/* TAB CONTENT: UPLOAD */}
         {activeTab === 'upload' && (
-          <div className="panel upload-panel single-column">
-            <div className="panel-heading">
-              <div>
-                <span className="chip">STEP 2</span>
-                <h3>Import & Discover Prospects</h3>
-              </div>
-            </div>
-            
-            <div className="panel" style={{ marginBottom: '2rem', border: '2px solid #1976d2' }}>
-              <div className="panel-heading">
-                <h3>Automated Prospect Discovery</h3>
-                <span className="chip">OPENCLI LINKEDIN</span>
-              </div>
-              <p>
-                Automated prospect discovery via OpenCLI LinkedIn search for boutique recruitment agency founders.
-                New matches are qualified through the server pipeline automatically.
-              </p>
-
-              {/* DISCOVERY PARAMETERS FORM */}
-              <div style={{ margin: '1rem 0', padding: '1rem', background: '#f7faf5', border: '1px solid #d9e2d9', borderRadius: '8px' }}>
-                <h4 style={{ margin: '0 0 0.8rem', fontSize: '14px', color: '#18342e' }}>Discovery Filters & Search Parameters</h4>
-                
-                {/* Countries (Multi-select) */}
-                <div style={{ marginBottom: '1rem' }}>
-                  <label style={{ fontSize: '12px', fontWeight: '700', marginBottom: '0.4rem', display: 'block', color: '#45534d' }}>
-                    Target Countries (Multi-select — Default: US)
-                  </label>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
-                    {[
-                      { id: 'US', label: '🇺🇸 United States' },
-                      { id: 'UK', label: '🇬🇧 United Kingdom' },
-                      { id: 'CA', label: '🇨🇦 Canada' },
-                      { id: 'AU', label: '🇦🇺 Australia' },
-                      { id: 'IN', label: '🇮🇳 India' },
-                      { id: 'DE', label: '🇩🇪 Germany' },
-                      { id: 'FR', label: '🇫🇷 France' },
-                    ].map((country) => {
-                      const checked = selectedCountries.includes(country.id);
-                      return (
-                        <button
-                          key={country.id}
-                          type="button"
-                          onClick={() => {
-                            if (checked) {
-                              if (selectedCountries.length > 1) {
-                                setSelectedCountries(selectedCountries.filter((c) => c !== country.id));
-                              }
-                            } else {
-                              setSelectedCountries([...selectedCountries, country.id]);
-                            }
-                          }}
-                          style={{
-                            background: checked ? '#18342e' : '#fff',
-                            color: checked ? '#fff' : '#18342e',
-                            border: `1px solid ${checked ? '#18342e' : '#b9c9bd'}`,
-                            padding: '6px 12px',
-                            borderRadius: '16px',
-                            fontSize: '12px',
-                            fontWeight: '600',
-                            cursor: 'pointer'
-                          }}
-                        >
-                          {country.label}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                <div style={{ display: 'flex', gap: '1rem' }}>
-                  {/* Job Positions (Multi-select) */}
-                  <div style={{ flex: 2 }}>
-                    <label style={{ fontSize: '12px', fontWeight: '700', marginBottom: '0.3rem', display: 'block', color: '#45534d' }}>
-                      Target Roles
-                    </label>
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-                      {['Founder', 'Owner', 'Partner', 'Director', 'CEO'].map((pos) => {
-                        const checked = selectedPositions.includes(pos);
-                        return (
-                          <button
-                            key={pos}
-                            type="button"
-                            onClick={() => {
-                              if (checked) {
-                                if (selectedPositions.length > 1) {
-                                  setSelectedPositions(selectedPositions.filter((p) => p !== pos));
-                                }
-                              } else {
-                                setSelectedPositions([...selectedPositions, pos]);
-                              }
-                            }}
-                            style={{
-                              background: checked ? '#e5f0c8' : '#fff',
-                              color: checked ? '#18342e' : '#55655d',
-                              border: `1px solid ${checked ? '#a5c07b' : '#d9e2d9'}`,
-                              padding: '4px 10px',
-                              borderRadius: '4px',
-                              fontSize: '11px',
-                              fontWeight: '600',
-                              cursor: 'pointer'
-                            }}
-                          >
-                            {pos}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-
-                  {/* Industry Keyword */}
-                  <div style={{ flex: 1 }}>
-                    <label style={{ fontSize: '12px', fontWeight: '700', marginBottom: '0.3rem', display: 'block', color: '#45534d' }}>
-                      Industry Keyword
-                    </label>
-                    <input
-                      type="text"
-                      placeholder="e.g. recruitment"
-                      value={searchKeyword}
-                      onChange={(e) => setSearchKeyword(e.target.value)}
-                      style={{ width: '100%', padding: '8px 12px' }}
-                    />
-                  </div>
-
-                  {/* Page Override */}
-                  <div style={{ width: '80px' }}>
-                    <label style={{ fontSize: '12px', fontWeight: '700', marginBottom: '0.3rem', display: 'block', color: '#45534d' }}>
-                      Page Number
-                    </label>
-                    <input
-                      type="number"
-                      min={1}
-                      max={100}
-                      value={searchPage}
-                      onChange={(e) => setSearchPage(Math.max(1, parseInt(e.target.value, 10) || 1))}
-                      style={{ width: '100%', padding: '8px 12px' }}
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <button className="primary" onClick={handleDiscoverProspects} disabled={discovering}>
-                {discovering ? 'Discovering…' : 'Discover ICP Prospects ➔'}
-              </button>
-              {discovering && (
-                <div className="empty" style={{ marginTop: '0.5rem' }}>
-                  Discovering prospects through OpenCLI LinkedIn...
-                </div>
-              )}
-              {!discovering && discoveryResult && (
-                <div className="empty" style={{ marginTop: '0.5rem', textAlign: 'left', padding: '12px 16px', background: '#e5f0c8', borderRadius: '6px', color: '#3d5220' }}>
-                  <strong>Discovery Complete (Page {discoveryResult.page ?? searchPage})</strong>: {discoveryResult.discovered} found · {discoveryResult.uniqueIngested} ingested & enrolled ·{' '}
-                  {discoveryResult.duplicatesSkipped} duplicates skipped · {discoveryResult.disqualified} disqualified.
-                  <div style={{ marginTop: '4px', fontSize: '12px', fontWeight: '600', color: '#2c5147' }}>
-                    ➔ Auto-advanced to Page {discoveryResult.nextPage ?? (searchPage + 1)} for next run.
-                  </div>
-                </div>
-              )}
-              {!discovering && discoveryError && (
-                <div className="empty" style={{ marginTop: '0.5rem' }}>
-                  {discoveryError}
-                </div>
-              )}
-            </div>
-
-            <div className="panel" style={{ marginBottom: '2rem' }}>
-              <div className="panel-heading">
-                <h3>Add Prospect Manually</h3>
-                <span className="chip">MANUAL ADD</span>
-              </div>
-              <p>
-                New here? Add your first real LinkedIn prospect below — no CSV needed.
-                Fill in the profile details and it is imported through the server automatically.
-              </p>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
-                <label>
-                  Full Name
-                  <input
-                    type="text"
-                    placeholder="e.g. Ada Lovelace"
-                    value={newProspectName}
-                    onChange={e => setNewProspectName(e.target.value)}
-                  />
-                </label>
-                <label>
-                  Headline / Title
-                  <input
-                    type="text"
-                    placeholder="e.g. Staff Backend Engineer"
-                    value={newProspectTitle}
-                    onChange={e => setNewProspectTitle(e.target.value)}
-                  />
-                </label>
-                <label>
-                  Company
-                  <input
-                    type="text"
-                    placeholder="e.g. Acme Corp"
-                    value={newProspectCompany}
-                    onChange={e => setNewProspectCompany(e.target.value)}
-                  />
-                </label>
-                <label>
-                  Location (optional)
-                  <input
-                    type="text"
-                    placeholder="e.g. San Francisco"
-                    value={newProspectLocation}
-                    onChange={e => setNewProspectLocation(e.target.value)}
-                  />
-                </label>
-              </div>
-              <label style={{ marginTop: '0.5rem' }}>
-                LinkedIn Profile URL
-                <input
-                  type="url"
-                  placeholder="https://www.linkedin.com/in/someone"
-                  value={newProspectLinkedinUrl}
-                  onChange={e => setNewProspectLinkedinUrl(e.target.value)}
-                />
-              </label>
-              <button className="primary" onClick={handleAddProspect} style={{ marginTop: '0.75rem' }}>
-                Add Prospect ➔
-              </button>
-            </div>
-
-            <div className="panel">
-              <div className="panel-heading">
-                <h3>Import Prospect CSV</h3>
-                <span className="chip">CSV UPLOAD</span>
-              </div>
-              <p>
-                Paste or drop prospect CSV exports. Rows are validated, LinkedIn URLs normalized, and bad
-                rows isolated automatically.
-              </p>
-              <textarea
-                className="criteria"
-                style={{ height: 160 }}
-                placeholder="Paste CSV contents here (name, title, company, location, linkedinUrl, skills)..."
-                value={csvText}
-                onChange={e => setCsvText(e.target.value)}
-              />
-              <button className="primary" onClick={handleUploadCsv}>
-                Process Prospect Batch ➔
-              </button>
-            </div>
-          </div>
+          <UploadPanel
+            roleName={roleName}
+            criteriaJson={criteriaJson}
+            setStatusMessage={setStatusMessage}
+            refreshProspects={refreshProspects}
+            refreshCampaigns={refreshCampaigns}
+            setSelectedCampaignId={setSelectedCampaignId}
+            setActiveTab={setActiveTab}
+          />
         )}
+
 
         {/* TAB CONTENT: PIPELINE */}
         {activeTab === 'pipeline' && (
@@ -1159,6 +618,7 @@ export function App() {
             campaignDrafts={campaignDrafts}
             prospectsState={prospectsState}
             actionStatusByDraft={actionStatusByDraft}
+            queueActions={queueActions}
             actionMode={actionMode}
             isCampaignRunning={isCampaignRunning}
             onSelectCampaign={setSelectedCampaignId}
@@ -1175,126 +635,17 @@ export function App() {
 
 
         {/* TAB CONTENT: EXPORT */}
-        {activeTab === 'export' && (
-          <div className="panel single-column">
-            <div className="panel-heading">
-              <h3>Outreach & Export</h3>
-              <span className="chip">CAMPAIGN READY</span>
-            </div>
-            <p>Download CSV export of ready prospects or schedule touchpoints.</p>
-            <a
-              href="/api/exports/approved.csv"
-              download="approved-prospects.csv"
-              className="primary link-button"
-            >
-              📥 Download Campaign-Ready Prospects CSV
-            </a>
-          </div>
-        )}
+        {activeTab === 'export' && <ExportPanel />}
 
         {/* TAB CONTENT: ENGAGEMENT */}
-        {activeTab === 'engagement' && (() => {
-          return (
-          <div className="panel single-column">
-            <div className="panel-heading">
-              <h3>Engagement Queue</h3>
-              <span className="chip">{queueActions.length} QUEUED ACTIONS</span>
-            </div>
-            <p>
-              Execute queued LinkedIn actions. Comment review happens inside each Campaign's prospect list.
-            </p>
-
-            {/* Queue actions — only shown when there are items */}
-            {queueActions.length > 0 ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '1.5rem' }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
-                  <h4 style={{ margin: '0', fontSize: '13px', color: '#18342e', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Queued Actions</h4>
-                  
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', alignItems: 'flex-end' }}>
-                    <div style={{ display: 'flex', gap: '0.5rem' }}>
-                      <div style={{ display: 'flex', border: '1px solid #b9c9bd', borderRadius: '4px', overflow: 'hidden' }}>
-                        <button 
-                          style={{ padding: '4px 8px', fontSize: '11px', cursor: 'pointer', border: 'none', background: queueFilter === 'ALL' ? '#e2e8e4' : '#fff', color: '#18342e' }}
-                          onClick={() => setQueueFilter('ALL')}
-                        >All</button>
-                        <button 
-                          style={{ padding: '4px 8px', fontSize: '11px', cursor: 'pointer', border: 'none', borderLeft: '1px solid #b9c9bd', background: queueFilter === 'LIKE' ? '#e2e8e4' : '#fff', color: '#18342e' }}
-                          onClick={() => setQueueFilter('LIKE')}
-                        >Likes</button>
-                        <button 
-                          style={{ padding: '4px 8px', fontSize: '11px', cursor: 'pointer', border: 'none', borderLeft: '1px solid #b9c9bd', background: queueFilter === 'COMMENT' ? '#e2e8e4' : '#fff', color: '#18342e' }}
-                          onClick={() => setQueueFilter('COMMENT')}
-                        >Comments</button>
-                      </div>
-                      <button style={{ border: '1px solid #b9c9bd', background: '#fff', color: '#18342e', padding: '4px 10px', borderRadius: '4px', fontSize: '11px', cursor: 'pointer' }} onClick={refreshEngagement}>
-                        ↺ Refresh
-                      </button>
-                    </div>
-                    <div style={{ display: 'flex', border: '1px solid #b9c9bd', borderRadius: '4px', overflow: 'hidden' }}>
-                        <button 
-                          style={{ padding: '4px 8px', fontSize: '11px', cursor: 'pointer', border: 'none', background: statusFilter === 'ALL' ? '#e2e8e4' : '#fff', color: '#18342e' }}
-                          onClick={() => setStatusFilter('ALL')}
-                        >Any Status</button>
-                        <button 
-                          style={{ padding: '4px 8px', fontSize: '11px', cursor: 'pointer', border: 'none', borderLeft: '1px solid #b9c9bd', background: statusFilter === 'PENDING' ? '#e2e8e4' : '#fff', color: '#18342e' }}
-                          onClick={() => setStatusFilter('PENDING')}
-                        >Pending</button>
-                        <button 
-                          style={{ padding: '4px 8px', fontSize: '11px', cursor: 'pointer', border: 'none', borderLeft: '1px solid #b9c9bd', background: statusFilter === 'COMPLETED' ? '#e2e8e4' : '#fff', color: '#18342e' }}
-                          onClick={() => setStatusFilter('COMPLETED')}
-                        >Completed</button>
-                        <button 
-                          style={{ padding: '4px 8px', fontSize: '11px', cursor: 'pointer', border: 'none', borderLeft: '1px solid #b9c9bd', background: statusFilter === 'FAILED' ? '#e2e8e4' : '#fff', color: '#18342e' }}
-                          onClick={() => setStatusFilter('FAILED')}
-                        >Failed</button>
-                    </div>
-                  </div>
-                </div>
-                {queueActions
-                  .filter(action => queueFilter === 'ALL' || (action.actionType || '').toUpperCase() === queueFilter)
-                  .filter(action => statusFilter === 'ALL' || (action.status || '').toUpperCase() === statusFilter)
-                  .map((action: any) => (
-                  <div key={action.id} style={{ padding: '0.6rem 0.9rem', border: '1px solid #d9e2d9', borderRadius: '6px', background: '#fff', fontSize: '13px', color: '#33453e' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-                      <span><strong>{action.actionType}</strong> · {action.status} · {action.outcomeLabel ?? 'pending'}</span>
-                      {action.errorCode ? <span style={{ color: '#c0392b', fontWeight: 'bold' }}>{action.errorCode}</span> : null}
-                    </div>
-                    <div style={{ fontSize: '11px', color: '#687771', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                      👤{' '}
-                      {action.prospectUrl ? (
-                        <a href={action.prospectUrl} target="_blank" rel="noopener noreferrer" style={{ color: '#2980b9', textDecoration: 'none', fontWeight: 'bold' }}>
-                          {action.prospectName}
-                        </a>
-                      ) : (
-                        <span>{action.prospectName}</span>
-                      )}
-                      &nbsp;|&nbsp; 🎯 {action.campaignName}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="empty">No actions in queue right now.</div>
-            )}
-
-            {/* Kill switches */}
-            {controls.length > 0 && (
-              <div>
-                <h4 style={{ margin: '0 0 0.75rem', fontSize: '13px', color: '#18342e', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Kill Switches</h4>
-                {controls.map((control: any) => (
-                  <div key={control.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.5rem 0.9rem', border: '1px solid #d9e2d9', borderRadius: '6px', background: '#fff', marginBottom: '0.5rem' }}>
-                    <small style={{ color: '#45534d' }}>{control.actionType} · enabled={String(control.enabled)} · kill={String(control.killSwitchActive)}</small>
-                    <div style={{ display: 'flex', gap: '0.4rem' }}>
-                      <button onClick={() => handleKillSwitch(control.accountId, control.actionType, true)} style={{ background: '#c0392b', color: '#fff', border: 'none', padding: '4px 10px', borderRadius: '4px', fontSize: '11px', cursor: 'pointer' }}>Stop</button>
-                      <button onClick={() => handleKillSwitch(control.accountId, control.actionType, false)} style={{ background: '#27ae60', color: '#fff', border: 'none', padding: '4px 10px', borderRadius: '4px', fontSize: '11px', cursor: 'pointer' }}>Clear</button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-          );
-        })()} 
+        {activeTab === 'engagement' && (
+          <EngagementPanel
+            queueActions={queueActions}
+            controls={controls}
+            refreshEngagement={refreshEngagement}
+            setStatusMessage={setStatusMessage}
+          />
+        )}
       </div>
     </div>
   );

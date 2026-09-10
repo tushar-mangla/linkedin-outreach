@@ -203,6 +203,7 @@ export type LinkedInPost = {
   publishedAt?: Date;
   sourceType: PostSourceType;
   contentHash: string;
+  canonicalPostIdentifier: string;
   createdAt: Date;
 };
 

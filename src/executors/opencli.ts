@@ -129,11 +129,27 @@ export class OpenCliExecutor implements LinkedInExecutor {
       const postIdxMatch = input.postUrl.match(/#post-(\d+)/);
       const postIdx = postIdxMatch ? parseInt(postIdxMatch[1], 10) : 0;
 
+      // Check if page is a 404 or empty activity page
+      const pageCheckScript = `(() => {
+        const text = document.body.innerText;
+        if (text.includes("This page doesn\\'t exist") || text.includes("Nothing to see for now")) {
+          return { error: 'POST_NOT_ELIGIBLE' };
+        }
+        return { success: true };
+      })()`;
+      const pageCheck = await this.evalJs(pageCheckScript);
+      if (pageCheck && pageCheck.error) {
+        throw new Error(pageCheck.error);
+      }
+
       const script = `(() => {
-        const likeButtons = Array.from(document.querySelectorAll('button')).filter(b => 
-          b.innerText.trim() === 'Like' || 
-          b.getAttribute('aria-label') === 'Like' ||
-          b.classList.contains('react-button__trigger')
+        const likeButtons = Array.from(document.querySelectorAll(
+          'button.react-button__trigger, button[aria-label*="Like" i], button:has(svg[data-test-icon="thumbs-up-outline-medium"])'
+        )).filter(b => 
+          b.closest('.feed-shared-social-action-bar') !== null || 
+          b.closest('.social-details-social-activity') !== null ||
+          b.closest('.artdeco-action-bar') !== null ||
+          b.getAttribute('aria-label')?.toLowerCase().includes('like')
         );
         if (likeButtons.length === 0) return { error: 'SELECTOR_MISMATCH' };
         const btn = likeButtons[${postIdx}] || likeButtons[0];
@@ -183,10 +199,26 @@ export class OpenCliExecutor implements LinkedInExecutor {
       const postIdxMatch = input.postUrl.match(/#post-(\d+)/);
       const postIdx = postIdxMatch ? parseInt(postIdxMatch[1], 10) : 0;
 
-      // 2. Click the comment button for the targeted post (exclude pill filters)
+      // Check if page is a 404, empty activity page, or authwall
+      const pageCheckScript = `(() => {
+        const text = document.body.innerText;
+        const url = window.location.href;
+        if (url.includes('/authwall') || url.includes('/checkpoint/') || url.includes('/login')) {
+          return { error: 'AUTH_REQUIRED' };
+        }
+        if (text.includes("This page doesn\\'t exist") || text.includes("Nothing to see for now")) {
+          return { error: 'POST_NOT_ELIGIBLE' };
+        }
+        return { success: true };
+      })()`;
+      const pageCheck = await this.evalJs(pageCheckScript);
+      if (pageCheck && pageCheck.error) {
+        throw new Error(pageCheck.error);
+      }
+
       const openCommentScript = `(() => {
         const commentButtons = Array.from(document.querySelectorAll(
-          'button.comment-button, button[aria-label="Comment"], button.social-actions-button.comment-button'
+          'button.comment-button, button[aria-label*="Comment" i], button.social-actions-button.comment-button, button:has(svg[data-test-icon="comment-outline-medium"])'
         )).filter(b => 
           !b.classList.contains('artdeco-pill') &&
           !b.classList.contains('profile-creator-shared-pills__pill')
@@ -201,51 +233,83 @@ export class OpenCliExecutor implements LinkedInExecutor {
       await this.evalJs(openCommentScript);
       await new Promise((r) => setTimeout(r, 1500));
 
-      // 3. Focus Quill editor, select contents, and execute insertText
       const commentTextJson = JSON.stringify(input.comment);
+
+      // 2.5. Check if we already have ANY comment on this post or the exact text
+      const duplicateCheckScript = `(() => {
+        // 1. Check if ANY comment author is "You"
+        const authorNames = Array.from(document.querySelectorAll('.update-components-actor__name, .comments-post-meta__name-text, span[aria-hidden="true"]'));
+        for (const author of authorNames) {
+          if (author.innerText && author.innerText.includes('You')) {
+            return { error: 'ACTION_DUPLICATE' };
+          }
+        }
+
+        // 2. Fallback: Check if the exact comment text is already visible on the page
+        const textToFind = ${commentTextJson};
+        const searchSub = textToFind.length > 40 ? textToFind.substring(0, 40) : textToFind;
+        const comments = Array.from(document.querySelectorAll('.comments-comment-item__main-content, .update-components-text, .feed-shared-update-v2__description'));
+        for (const c of comments) {
+          if (c.innerText && c.innerText.includes(searchSub)) {
+            return { error: 'ACTION_DUPLICATE' };
+          }
+        }
+        return { success: true };
+      })()`;
+      const duplicateCheck = await this.evalJs(duplicateCheckScript);
+      if (duplicateCheck && duplicateCheck.error) {
+        throw new Error(duplicateCheck.error);
+      }
+
+      // 3. Focus Quill editor and insert text
       const typeScript = `(() => {
         const editors = Array.from(document.querySelectorAll(
-          '.ql-editor[contenteditable="true"], div[contenteditable="true"][role="textbox"], .comments-comment-box div[contenteditable="true"], div[contenteditable="true"][data-placeholder*="Comment" i], div[contenteditable="true"][aria-label*="comment" i]'
+          '.comments-comment-box .ql-editor[contenteditable="true"], .ql-editor[contenteditable="true"], div[contenteditable="true"][data-placeholder*="Comment" i]'
         )).filter(e => e.offsetParent !== null && !e.classList.contains('ql-clipboard'));
         if (editors.length === 0) return { error: 'SELECTOR_MISMATCH' };
         const editor = editors[0];
         editor.focus();
+
+        // Set selection
         const selection = window.getSelection();
         const range = document.createRange();
         range.selectNodeContents(editor);
-        if (selection) {
-          selection.removeAllRanges();
-          selection.addRange(range);
-        }
+        range.collapse(false);
+        selection.removeAllRanges();
+        selection.addRange(range);
+
+        // Execute insertText
         document.execCommand('insertText', false, ${commentTextJson});
+        
+        // Trigger synthetic input events
+        editor.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, inputType: 'insertText', data: ${commentTextJson} }));
         editor.dispatchEvent(new Event('input', { bubbles: true }));
-        editor.dispatchEvent(new Event('change', { bubbles: true }));
-        return { success: true };
+        editor.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key: ' ' }));
+
+        return { success: true, text: editor.innerText.trim().substring(0, 20) };
       })()`;
       const typeResult = await this.evalJs(typeScript);
       if (typeResult && typeResult.error) {
         throw new Error(typeResult.error);
       }
-      await new Promise((r) => setTimeout(r, 1500));
+      await new Promise((r) => setTimeout(r, 2000));
 
-      // 4. Click Submit/Post button specifically inside comment box form
+      // 4. Click Submit/Comment button inside the form
       const submitScript = `(() => {
-        const submitBtn = document.querySelector(
-          '.comments-comment-box__submit-button--cr, .comments-comment-box__submit-button, button.comments-comment-box__submit-button--cr, .comments-comment-box__form button.artdeco-button--primary'
-        );
-        if (!submitBtn) {
-          const fallbacks = Array.from(document.querySelectorAll('.comments-comment-box button, form button')).filter(b => 
-            (b.innerText.trim() === 'Comment' || b.innerText.trim() === 'Post') &&
-            b.offsetParent !== null &&
-            !b.classList.contains('comment-button')
-          );
-          if (fallbacks.length === 0) return { error: 'SUBMIT_NOT_FOUND' };
-          if (fallbacks[0].disabled) return { error: 'SUBMIT_DISABLED' };
-          fallbacks[0].click();
-          return { success: true };
+        const editors = Array.from(document.querySelectorAll(
+          '.comments-comment-box .ql-editor[contenteditable="true"], .ql-editor[contenteditable="true"]'
+        )).filter(e => e.offsetParent !== null && !e.classList.contains('ql-clipboard'));
+        const editor = editors[0];
+        const form = editor ? (editor.closest('form') || editor.closest('.comments-comment-box')) : document;
+        
+        const submitBtn = form ? form.querySelector(
+          'button.comments-comment-box__submit-button--cr, button.comments-comment-box__submit-button, button.comments-comment-texteditor__submit-button, button[type="submit"], button.artdeco-button--primary'
+        ) : null;
+        
+        if (!submitBtn) return { error: 'SUBMIT_NOT_FOUND' };
+        if (submitBtn.disabled || submitBtn.getAttribute('aria-disabled') === 'true' || submitBtn.classList.contains('artdeco-button--disabled')) {
+          return { error: 'SUBMIT_DISABLED' };
         }
-
-        if (submitBtn.disabled) return { error: 'SUBMIT_DISABLED' };
         submitBtn.click();
         return { success: true };
       })()`;
@@ -260,16 +324,15 @@ export class OpenCliExecutor implements LinkedInExecutor {
         const errorToast = document.querySelector('.artdeco-toast-item--error');
         if (errorToast) return { error: 'LINKEDIN_ERROR_TOAST: ' + errorToast.innerText };
 
-        const remainingEditors = Array.from(document.querySelectorAll(
-          '.ql-editor[contenteditable="true"], div[contenteditable="true"][role="textbox"], .comments-comment-box div[contenteditable="true"], div[contenteditable="true"][data-placeholder*="Comment" i], div[contenteditable="true"][aria-label*="comment" i]'
+        const editors = Array.from(document.querySelectorAll(
+          '.ql-editor[contenteditable="true"], div[contenteditable="true"][role="textbox"], .comments-comment-box div[contenteditable="true"]'
         )).filter(e => e.offsetParent !== null && !e.classList.contains('ql-clipboard'));
         
-        const commentList = document.querySelector('.comments-comments-list, .feed-shared-update-v2__comments-container');
-        if (commentList && !commentList.innerText.includes(${commentTextJson}.substring(0, 15))) {
-           // Not found in the comments list, but might be taking time to render.
-           // For now, if it's not in the editor and no error toast, we might assume success,
-           // but let's be strict.
-           return { error: 'COMMENT_NOT_VISIBLE_AFTER_SUBMIT' };
+        // If the editor is still visible and still contains our text, it didn't submit!
+        for (const editor of editors) {
+          if (editor.innerText.includes(${commentTextJson}.substring(0, 10))) {
+            return { error: 'COMMENT_STILL_IN_EDITOR' };
+          }
         }
 
         return { success: true };

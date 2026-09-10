@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { LinkedInPost, PostSourceType } from '../../types.js';
+import { canonicalPostIdentifier } from './post-identity.js';
 
 // ─── ProspectPostSource interface ────────────────────────────────────────────
 
@@ -52,5 +53,6 @@ export function normaliseRawPost(
     publishedAt: raw.publishedAt,
     sourceType,
     contentHash: hashPostContent(raw.postText),
+    canonicalPostIdentifier: canonicalPostIdentifier(raw.postUrl),
   };
 }

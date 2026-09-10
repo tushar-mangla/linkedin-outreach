@@ -15,11 +15,13 @@ import {
   SequenceDefinition,
   CampaignEnrollment,
   ScheduledAction,
+  DEFAULT_OPERATOR_ID,
 } from '../types.js';
 
 import { DBAdapter } from './db-adapter.js';
 import { BudgetStorageAdapter } from '../services/budget-storage-adapter.js';
 import { LeaseStorageAdapter } from '../services/lease-storage-adapter.js';
+import { CooldownPolicy } from '../services/engagement/cooldown-policy.js';
 
 type MemoryStorageTables = {
   prospects: Prospect[];
@@ -37,7 +39,9 @@ type MemoryStorageTables = {
   sequenceDefinitions: SequenceDefinition[];
   campaignEnrollments: CampaignEnrollment[];
   scheduledActions: ScheduledAction[];
+  accountPostComments: Array<{ tenantId: string; accountId: string; canonicalPostIdentifier: string; scheduledActionId?: string; status: 'PENDING' | 'COMPLETED' | 'FAILED' | 'UNCERTAIN' }>;
   manualTasks: Array<{ id: string; tenantId: string; scheduledActionId: string; actionType: 'LIKE' | 'COMMENT'; status: 'PENDING_CONFIRMATION' | 'COMPLETED' | 'FAILED' | 'UNCERTAIN'; outcomeLabel?: 'manual-confirmed' | 'uncertain'; confirmationActor?: string; confirmationMetadata?: Record<string, unknown>; createdAt: Date; completedAt?: Date }>;
+  engagementHistory: Array<{ id: string; tenantId: string; prospectId: string; postId: string; actionType: 'LIKE' | 'COMMENT'; interactedAt: Date; operatorId: string; scheduledActionId?: string }>;
 };
 
 export const TERMINAL_SCHEDULED_ACTION_STATUSES: ReadonlyArray<string> = ['COMPLETED', 'FAILED', 'CANCELLED', 'UNCERTAIN'];
@@ -59,7 +63,9 @@ export class MemoryStorage implements DBAdapter, BudgetStorageAdapter, LeaseStor
     sequenceDefinitions: [],
     campaignEnrollments: [],
     scheduledActions: [],
+    accountPostComments: [],
     manualTasks: [],
+    engagementHistory: [],
   };
 
   // --- Prospect Methods ---
@@ -360,7 +366,43 @@ export class MemoryStorage implements DBAdapter, BudgetStorageAdapter, LeaseStor
     task.confirmationMetadata = metadata;
     task.outcomeLabel = outcome === 'COMPLETED' ? 'manual-confirmed' : 'uncertain';
     task.completedAt = new Date();
+    if (task.scheduledActionId) {
+      await this.finalizeCommentAction(tenantId, task.scheduledActionId, {
+        status: outcome === 'COMPLETED' ? 'COMPLETED' : outcome === 'FAILED' ? 'FAILED' : 'UNCERTAIN',
+        outcomeLabel: task.outcomeLabel,
+      }, operatorId);
+    }
     return { status: task.status, outcomeLabel: task.outcomeLabel };
+  }
+
+  async recoverStaleClaims(ttlMs: number = 15 * 60 * 1000, tenantId?: string, accountId?: string): Promise<number> {
+    const threshold = new Date(Date.now() - ttlMs);
+    let recoveredCount = 0;
+    const now = new Date();
+
+    for (const action of this.tables.scheduledActions) {
+      if (action.status !== 'CLAIMED') continue;
+      if (tenantId && action.tenantId !== tenantId) continue;
+      if (accountId && action.accountId !== accountId) continue;
+
+      const claimedAt = action.claimedAt ? new Date(action.claimedAt) : action.updatedAt;
+      if (claimedAt < threshold) {
+        // Also verify whether there is an active lease for this account
+        const activeLease = this.tables.accountLeases.find(
+          l => l.tenantId === action.tenantId && l.accountId === action.accountId && l.expiresAt > now
+        );
+        if (!activeLease) {
+          action.status = 'PENDING';
+          action.errorCode = 'DB_TRANSIENT';
+          action.claimedBy = undefined;
+          action.claimedAt = undefined;
+          action.claimToken = undefined;
+          action.updatedAt = now;
+          recoveredCount++;
+        }
+      }
+    }
+    return recoveredCount;
   }
 
   async claimNextScheduledAction(tenantId: string, accountId: string, workerId: string, claimToken?: string): Promise<ScheduledAction | undefined> {
@@ -411,6 +453,67 @@ export class MemoryStorage implements DBAdapter, BudgetStorageAdapter, LeaseStor
     return action;
   }
 
+  async isCommentSlotOwner(tenantId: string, accountId: string, actionId: string): Promise<boolean> {
+    return this.tables.accountPostComments.some(slot => slot.tenantId === tenantId && slot.accountId === accountId && slot.scheduledActionId === actionId && slot.status === 'PENDING');
+  }
+
+  async finalizeCommentAction(tenantId: string, actionId: string, result: { status: ScheduledAction['status']; outcomeLabel?: ScheduledAction['outcomeLabel']; errorCode?: string }, operatorId?: string): Promise<ScheduledAction | undefined> {
+    const action = this.tables.scheduledActions.find(item => item.tenantId === tenantId && item.id === actionId);
+    if (!action) return undefined;
+    if (TERMINAL_SCHEDULED_ACTION_STATUSES.includes(action.status)) {
+      if (action.status === result.status) {
+        return action;
+      }
+      throw new Error('TERMINAL_STATE_IMMUTABLE');
+    }
+    if (action.actionType === 'comment' && ['COMPLETED', 'FAILED', 'UNCERTAIN'].includes(result.status)) {
+      const slot = this.tables.accountPostComments.find(item => item.tenantId === tenantId && item.accountId === action.accountId && item.scheduledActionId === actionId && item.status === 'PENDING');
+      if (!slot) throw new Error('COMMENT_SLOT_OWNER_REQUIRED');
+      slot.status = result.status as 'COMPLETED' | 'FAILED' | 'UNCERTAIN';
+    }
+
+    if (result.status === 'COMPLETED' && (action.actionType === 'comment' || action.actionType === 'like')) {
+      const alreadyRecorded = this.tables.engagementHistory.some(h => h.scheduledActionId === action.id);
+      if (!alreadyRecorded) {
+        const postId = (action.payload?.postId as string) ?? (action.revisionId ? `post-${action.revisionId}` : uuidv4());
+        this.tables.engagementHistory.push({
+          id: uuidv4(),
+          tenantId,
+          prospectId: action.prospectId,
+          postId,
+          actionType: action.actionType.toUpperCase() as 'LIKE' | 'COMMENT',
+          interactedAt: new Date(),
+          operatorId: operatorId ?? action.claimedBy ?? DEFAULT_OPERATOR_ID,
+          scheduledActionId: action.id,
+        });
+      }
+    }
+
+    return this.updateScheduledActionResult(tenantId, actionId, result);
+  }
+
+  async finalizeEngagementAction(tenantId: string, actionId: string, result: { status: ScheduledAction['status']; outcomeLabel?: ScheduledAction['outcomeLabel']; errorCode?: string }, operatorId?: string): Promise<ScheduledAction | undefined> {
+    return this.finalizeCommentAction(tenantId, actionId, result, operatorId);
+  }
+
+  async checkEngagementCooldown(tenantId: string, prospectId: string, actionType: 'like' | 'comment', now?: Date) {
+    const history = this.tables.engagementHistory
+      .filter(h => h.tenantId === tenantId && h.prospectId === prospectId)
+      .map(h => ({
+        id: h.id,
+        tenantId: h.tenantId,
+        prospectId: h.prospectId,
+        postId: h.postId,
+        actionType: h.actionType,
+        interactedAt: h.interactedAt,
+        operatorId: h.operatorId,
+      }));
+    const policy = new CooldownPolicy();
+    return actionType === 'comment'
+      ? policy.checkComment(prospectId, history, now)
+      : policy.checkLike(prospectId, history, now);
+  }
+
   // --- Test utility methods ---
   public getTable<T extends keyof MemoryStorageTables>(tableName: T): MemoryStorageTables[T] {
     return this.tables[tableName];
@@ -433,7 +536,9 @@ export class MemoryStorage implements DBAdapter, BudgetStorageAdapter, LeaseStor
       sequenceDefinitions: [],
       campaignEnrollments: [],
       scheduledActions: [],
+      accountPostComments: [],
       manualTasks: [],
+      engagementHistory: [],
     };
   }
 }

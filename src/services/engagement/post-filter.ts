@@ -60,14 +60,14 @@ export class PostFilter {
     }
 
     // 3. Apply the selection rule:
-    // - If we have recent posts, keep up to 2 of them.
+    // - If we have recent posts, keep up to 1 of them.
     // - If we have no recent posts, keep exactly 1 older post (the latest one).
     if (recentPosts.length > 0) {
-      kept.push(...recentPosts.slice(0, 2));
+      kept.push(...recentPosts.slice(0, 1));
       
       // Reject the rest
-      for (const post of recentPosts.slice(2)) {
-        rejected.push({ post, reason: 'Exceeded maximum of 2 recent posts' });
+      for (const post of recentPosts.slice(1)) {
+        rejected.push({ post, reason: 'Exceeded maximum of 1 recent post' });
       }
       for (const post of olderPosts) {
         rejected.push({ post, reason: `Post is older than ${this.maxAgeDays} days (and recent posts exist)` });

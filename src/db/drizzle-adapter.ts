@@ -1,14 +1,18 @@
 
+import { randomUUID } from 'node:crypto';
 import { and, eq, gte, lt, sql, lte } from 'drizzle-orm';
 import { PgliteDatabase } from 'drizzle-orm/pglite';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
-import { Prospect, IcpEvaluation, ImportBatch, IcpDefinition, ProspectStage, ReviewDecision, AuditEvent } from '../types.js';
+import { Prospect, IcpEvaluation, ImportBatch, IcpDefinition, ProspectStage, ReviewDecision, AuditEvent, DEFAULT_OPERATOR_ID } from '../types.js';
 import { DBAdapter } from './db-adapter.js';
 import { BudgetStorageAdapter } from '../services/budget-storage-adapter.js';
 import { LeaseStorageAdapter } from '../services/lease-storage-adapter.js';
+import { CooldownPolicy } from '../services/engagement/cooldown-policy.js';
 import * as schema from './schema.js';
 import { assertTenantId, requireTenantId } from './tenant-context.js';
-import { dailyActionBudgets, budgetReservations, prospects, icpEvaluations, importBatches, icpDefinitions, accountLeases, reviewDecisions, auditEvents, scheduledActions, manualTasks } from './schema.js';
+import { withDbRetry } from './retry.js';
+import { dailyActionBudgets, budgetReservations, prospects, icpEvaluations, importBatches, icpDefinitions, accountLeases, reviewDecisions, auditEvents, scheduledActions, manualTasks, accountPostComments, engagementHistory, engagementPosts, engagementDrafts, recommendationRevisions } from './schema.js';
+
 
 export const TERMINAL_SCHEDULED_ACTION_STATUSES: ReadonlyArray<string> = ['COMPLETED', 'FAILED', 'CANCELLED', 'UNCERTAIN'];
 
@@ -248,81 +252,244 @@ export class DrizzleAdapter implements DBAdapter, BudgetStorageAdapter, LeaseSto
         return result[0] as import('../types.js').ScheduledAction;
     }
 
+    async recoverStaleClaims(ttlMs: number = 15 * 60 * 1000, tenantId?: string, accountId?: string): Promise<number> {
+        const intervalSeconds = Math.max(1, Math.floor(ttlMs / 1000));
+        return withDbRetry(async () => {
+            const tenantFilter = tenantId ? sql`AND a."tenant_id" = ${tenantId}::uuid` : sql``;
+            const accountFilter = accountId ? sql`AND a."account_id" = ${accountId}::uuid` : sql``;
+
+            const recovered = await this.db.execute(sql`
+                UPDATE "scheduled_actions" AS a
+                SET
+                    "status" = 'PENDING',
+                    "claimed_by" = NULL,
+                    "claimed_at" = NULL,
+                    "claim_token" = NULL,
+                    "error_code" = 'DB_TRANSIENT',
+                    "updated_at" = now()
+                WHERE a."status" = 'CLAIMED'
+                  AND COALESCE(a."claimed_at", a."updated_at") < now() - (${intervalSeconds} || ' seconds')::interval
+                  ${tenantFilter}
+                  ${accountFilter}
+                  AND NOT EXISTS (
+                      SELECT 1 FROM "account_leases" AS l
+                      WHERE l."tenant_id" = a."tenant_id"
+                        AND l."account_id" = a."account_id"
+                        AND l."expires_at" > now()
+                  )
+                RETURNING a."id";
+            `);
+            const rows = (recovered as unknown as { rows?: Array<Record<string, unknown>> }).rows ?? [];
+            return rows.length;
+        });
+    }
+
     async claimNextScheduledAction(tenantId: string, accountId: string, workerId: string, claimToken?: string) {
         assertTenantId(tenantId);
         const { randomUUID } = await import('node:crypto');
         const token = claimToken ?? randomUUID();
-        // Atomic tenant-bound claim: single UPDATE over the oldest PENDING row.
-        // PostgreSQL runtime uses FOR UPDATE SKIP LOCKED semantics via row-level
-        // locking; the subselect orders deterministically so concurrent workers
-        // never claim the same row.
-        const claimed = await this.db.execute(sql`
-            UPDATE "scheduled_actions" AS action SET
-                "status" = 'CLAIMED',
-                "claimed_by" = ${workerId},
-                "claimed_at" = now(),
-                "claim_token" = ${token},
-                "updated_at" = now()
-            WHERE "id" = (
-                SELECT "id" FROM "scheduled_actions"
-                WHERE "tenant_id" = ${tenantId}::uuid
-                  AND "account_id" = ${accountId}::uuid
-                  AND "status" = 'PENDING'
-                  AND "scheduled_for" <= now()
-                ORDER BY "scheduled_for" ASC, "created_at" ASC
-                LIMIT 1
-                FOR UPDATE SKIP LOCKED
-            )
-            RETURNING *;
-        `);
-        const rows = (claimed as unknown as { rows?: Array<Record<string, unknown>> }).rows ?? [];
-        if (rows.length === 0) return undefined;
-        const row = rows[0] as Record<string, unknown>;
-        return {
-            id: row.id as string,
-            tenantId: row.tenant_id as string,
-            campaignEnrollmentId: (row.campaign_enrollment_id as string) ?? undefined,
-            prospectId: row.prospect_id as string,
-            accountId: row.account_id as string,
-            actionType: row.action_type as import('../types.js').ScheduledAction['actionType'],
-            payload: (row.payload as Record<string, unknown>) ?? undefined,
-            scheduledFor: new Date(row.scheduled_for as string),
-            status: row.status as import('../types.js').ScheduledAction['status'],
-            idempotencyKey: row.idempotency_key as string,
-            claimToken: (row.claim_token as string) ?? token,
-            revisionId: (row.revision_id as string) ?? undefined,
-            postHash: (row.post_hash as string) ?? undefined,
-            mode: (row.mode as import('../types.js').ScheduledAction['mode']) ?? undefined,
-            outcomeLabel: (row.outcome_label as import('../types.js').ScheduledAction['outcomeLabel']) ?? undefined,
-            errorCode: (row.error_code as string) ?? undefined,
-            claimedBy: (row.claimed_by as string) ?? undefined,
-            claimedAt: row.claimed_at ? new Date(row.claimed_at as string) : undefined,
-            completedAt: row.completed_at ? new Date(row.completed_at as string) : undefined,
-            createdAt: new Date(row.created_at as string),
-            updatedAt: new Date(row.updated_at as string),
-        } as import('../types.js').ScheduledAction;
+        return withDbRetry(async () => {
+            // Atomic tenant-bound claim: single UPDATE over the oldest PENDING row.
+            // PostgreSQL runtime uses FOR UPDATE SKIP LOCKED semantics via row-level
+            // locking; the subselect orders deterministically so concurrent workers
+            // never claim the same row.
+            const claimed = await this.db.execute(sql`
+                UPDATE "scheduled_actions" AS action SET
+                    "status" = 'CLAIMED',
+                    "claimed_by" = ${workerId},
+                    "claimed_at" = now(),
+                    "claim_token" = ${token},
+                    "updated_at" = now()
+                WHERE "id" = (
+                    SELECT "id" FROM "scheduled_actions"
+                    WHERE "tenant_id" = ${tenantId}::uuid
+                      AND "account_id" = ${accountId}::uuid
+                      AND "status" = 'PENDING'
+                      AND "scheduled_for" <= now()
+                    ORDER BY "scheduled_for" ASC, "created_at" ASC
+                    LIMIT 1
+                    FOR UPDATE SKIP LOCKED
+                )
+                RETURNING *;
+            `);
+            const rows = (claimed as unknown as { rows?: Array<Record<string, unknown>> }).rows ?? [];
+            if (rows.length === 0) return undefined;
+            const row = rows[0] as Record<string, unknown>;
+            return {
+                id: row.id as string,
+                tenantId: row.tenant_id as string,
+                campaignEnrollmentId: (row.campaign_enrollment_id as string) ?? undefined,
+                prospectId: row.prospect_id as string,
+                accountId: row.account_id as string,
+                actionType: row.action_type as import('../types.js').ScheduledAction['actionType'],
+                payload: (row.payload as Record<string, unknown>) ?? undefined,
+                scheduledFor: new Date(row.scheduled_for as string),
+                status: row.status as import('../types.js').ScheduledAction['status'],
+                idempotencyKey: row.idempotency_key as string,
+                claimToken: (row.claim_token as string) ?? token,
+                revisionId: (row.revision_id as string) ?? undefined,
+                postHash: (row.post_hash as string) ?? undefined,
+                mode: (row.mode as import('../types.js').ScheduledAction['mode']) ?? undefined,
+                outcomeLabel: (row.outcome_label as import('../types.js').ScheduledAction['outcomeLabel']) ?? undefined,
+                errorCode: (row.error_code as string) ?? undefined,
+                claimedBy: (row.claimed_by as string) ?? undefined,
+                claimedAt: row.claimed_at ? new Date(row.claimed_at as string) : undefined,
+                completedAt: row.completed_at ? new Date(row.completed_at as string) : undefined,
+                createdAt: new Date(row.created_at as string),
+                updatedAt: new Date(row.updated_at as string),
+            } as import('../types.js').ScheduledAction;
+        });
     }
 
     async updateScheduledActionStatus(actionId: string, status: import('../types.js').ScheduledAction['status']) {
         const tenantId = requireTenantId();
-        const current = await this.db.query.scheduledActions.findFirst({ where: and(eq(scheduledActions.id, actionId), eq(scheduledActions.tenantId, tenantId)) });
-        if (!current) return undefined;
-        if (TERMINAL_SCHEDULED_ACTION_STATUSES.includes(current.status)) {
-            throw new Error('TERMINAL_STATE_IMMUTABLE');
-        }
-        const rows = await this.db.update(scheduledActions).set({ status, updatedAt: new Date(), completedAt: TERMINAL_SCHEDULED_ACTION_STATUSES.includes(status) ? new Date() : current.completedAt }).where(and(eq(scheduledActions.id, actionId), eq(scheduledActions.tenantId, tenantId))).returning();
-        return rows[0] as import('../types.js').ScheduledAction | undefined;
+        return withDbRetry(async () => {
+            const current = await this.db.query.scheduledActions.findFirst({ where: and(eq(scheduledActions.id, actionId), eq(scheduledActions.tenantId, tenantId)) });
+            if (!current) return undefined;
+            if (TERMINAL_SCHEDULED_ACTION_STATUSES.includes(current.status)) {
+                throw new Error('TERMINAL_STATE_IMMUTABLE');
+            }
+            const rows = await this.db.update(scheduledActions).set({ status, updatedAt: new Date(), completedAt: TERMINAL_SCHEDULED_ACTION_STATUSES.includes(status) ? new Date() : current.completedAt }).where(and(eq(scheduledActions.id, actionId), eq(scheduledActions.tenantId, tenantId))).returning();
+            return rows[0] as import('../types.js').ScheduledAction | undefined;
+        });
     }
 
     async updateScheduledActionResult(tenantId: string, actionId: string, result: { status: import('../types.js').ScheduledAction['status']; outcomeLabel?: import('../types.js').ScheduledAction['outcomeLabel']; errorCode?: string }) {
         assertTenantId(tenantId);
-        const current = await this.db.query.scheduledActions.findFirst({ where: and(eq(scheduledActions.id, actionId), eq(scheduledActions.tenantId, tenantId)) });
-        if (!current) return undefined;
-        if (TERMINAL_SCHEDULED_ACTION_STATUSES.includes(current.status)) {
-            throw new Error('TERMINAL_STATE_IMMUTABLE');
-        }
-        const rows = await this.db.update(scheduledActions).set({ status: result.status, outcomeLabel: result.outcomeLabel, errorCode: result.errorCode, completedAt: TERMINAL_SCHEDULED_ACTION_STATUSES.includes(result.status) ? new Date() : undefined, updatedAt: new Date() }).where(and(eq(scheduledActions.id, actionId), eq(scheduledActions.tenantId, tenantId))).returning();
-        return rows[0] as import('../types.js').ScheduledAction | undefined;
+        return withDbRetry(async () => {
+            const current = await this.db.query.scheduledActions.findFirst({ where: and(eq(scheduledActions.id, actionId), eq(scheduledActions.tenantId, tenantId)) });
+            if (!current) return undefined;
+            if (TERMINAL_SCHEDULED_ACTION_STATUSES.includes(current.status)) {
+                throw new Error('TERMINAL_STATE_IMMUTABLE');
+            }
+            const rows = await this.db.update(scheduledActions).set({ status: result.status, outcomeLabel: result.outcomeLabel, errorCode: result.errorCode, completedAt: TERMINAL_SCHEDULED_ACTION_STATUSES.includes(result.status) ? new Date() : undefined, updatedAt: new Date() }).where(and(eq(scheduledActions.id, actionId), eq(scheduledActions.tenantId, tenantId))).returning();
+            return rows[0] as import('../types.js').ScheduledAction | undefined;
+        });
+    }
+
+    async isCommentSlotOwner(tenantId: string, accountId: string, actionId: string): Promise<boolean> {
+        assertTenantId(tenantId);
+        const slot = await this.db.query.accountPostComments.findFirst({ where: and(
+            eq(accountPostComments.tenantId, tenantId),
+            eq(accountPostComments.accountId, accountId),
+            eq(accountPostComments.scheduledActionId, actionId),
+            eq(accountPostComments.status, 'PENDING'),
+        ) });
+        return !!slot;
+    }
+
+    async finalizeCommentAction(tenantId: string, actionId: string, result: { status: import('../types.js').ScheduledAction['status']; outcomeLabel?: import('../types.js').ScheduledAction['outcomeLabel']; errorCode?: string }, operatorId?: string) {
+        assertTenantId(tenantId);
+        return withDbRetry(async () => {
+            return this.db.transaction(async (tx) => {
+                const current = await tx.query.scheduledActions.findFirst({ where: and(eq(scheduledActions.id, actionId), eq(scheduledActions.tenantId, tenantId)) });
+                if (!current) return undefined;
+                if (TERMINAL_SCHEDULED_ACTION_STATUSES.includes(current.status)) {
+                    if (current.status === result.status) {
+                        return current as import('../types.js').ScheduledAction;
+                    }
+                    throw new Error('TERMINAL_STATE_IMMUTABLE');
+                }
+                const terminal = ['COMPLETED', 'FAILED', 'UNCERTAIN'].includes(result.status);
+                const rows = await tx.update(scheduledActions).set({ status: result.status, outcomeLabel: result.outcomeLabel, errorCode: result.errorCode, completedAt: terminal ? new Date() : undefined, updatedAt: new Date() }).where(and(eq(scheduledActions.id, actionId), eq(scheduledActions.tenantId, tenantId))).returning();
+                if (current.actionType === 'comment' && terminal) {
+                    const slotRows = await tx.update(accountPostComments).set({ status: result.status, updatedAt: new Date() }).where(and(
+                        eq(accountPostComments.tenantId, tenantId),
+                        eq(accountPostComments.accountId, current.accountId),
+                        eq(accountPostComments.scheduledActionId, actionId),
+                        eq(accountPostComments.status, 'PENDING'),
+                    )).returning();
+                    if (!slotRows[0]) throw new Error('COMMENT_SLOT_OWNER_REQUIRED');
+                }
+
+                // If action completed successfully and is an engagement action (like/comment), insert into engagement_history
+                if (result.status === 'COMPLETED' && (current.actionType === 'comment' || current.actionType === 'like')) {
+                    let postId: string | undefined;
+                    if (current.revisionId) {
+                        const revision = await tx.query.recommendationRevisions.findFirst({
+                            where: and(
+                                eq(recommendationRevisions.id, current.revisionId),
+                                eq(recommendationRevisions.tenantId, tenantId),
+                            ),
+                        });
+                        if (revision) {
+                            const draft = await tx.query.engagementDrafts.findFirst({
+                                where: and(
+                                    eq(engagementDrafts.id, revision.draftId),
+                                    eq(engagementDrafts.tenantId, tenantId),
+                                ),
+                            });
+                            if (draft) {
+                                postId = draft.postId;
+                            }
+                        }
+                    }
+                    if (!postId && current.postHash) {
+                        const post = await tx.query.engagementPosts.findFirst({
+                            where: and(
+                                eq(engagementPosts.tenantId, tenantId),
+                                eq(engagementPosts.contentHash, current.postHash),
+                            ),
+                        });
+                        if (post) {
+                            postId = post.id;
+                        }
+                    }
+                    if (!postId) {
+                        const post = await tx.query.engagementPosts.findFirst({
+                            where: and(
+                                eq(engagementPosts.tenantId, tenantId),
+                                eq(engagementPosts.prospectId, current.prospectId),
+                            ),
+                        });
+                        if (post) {
+                            postId = post.id;
+                        }
+                    }
+                    if (postId) {
+                        await tx.insert(engagementHistory).values({
+                            id: randomUUID(),
+                            tenantId,
+                            prospectId: current.prospectId,
+                            postId,
+                            actionType: current.actionType.toUpperCase() as 'LIKE' | 'COMMENT',
+                            interactedAt: new Date(),
+                            operatorId: operatorId ?? current.claimedBy ?? DEFAULT_OPERATOR_ID,
+                            scheduledActionId: current.id,
+                        }).onConflictDoNothing();
+                    }
+                }
+
+                return rows[0] as import('../types.js').ScheduledAction | undefined;
+            });
+        });
+    }
+
+    async finalizeEngagementAction(tenantId: string, actionId: string, result: { status: import('../types.js').ScheduledAction['status']; outcomeLabel?: import('../types.js').ScheduledAction['outcomeLabel']; errorCode?: string }, operatorId?: string) {
+        return this.finalizeCommentAction(tenantId, actionId, result, operatorId);
+    }
+
+    async checkEngagementCooldown(tenantId: string, prospectId: string, actionType: 'like' | 'comment', now?: Date) {
+        assertTenantId(tenantId);
+        const rows = await this.db.query.engagementHistory.findMany({
+            where: and(
+                eq(engagementHistory.tenantId, tenantId),
+                eq(engagementHistory.prospectId, prospectId),
+            ),
+        });
+        const history: import('../types.js').EngagementHistory[] = rows.map((r) => ({
+            id: r.id,
+            tenantId: r.tenantId,
+            prospectId: r.prospectId,
+            postId: r.postId,
+            actionType: r.actionType as 'LIKE' | 'COMMENT',
+            interactedAt: r.interactedAt,
+            operatorId: r.operatorId,
+        }));
+        const policy = new CooldownPolicy();
+        return actionType === 'comment'
+            ? policy.checkComment(prospectId, history, now)
+            : policy.checkLike(prospectId, history, now);
     }
 
     async createManualTask(task: { tenantId: string; scheduledActionId: string; actionType: 'LIKE' | 'COMMENT' }) {
@@ -335,6 +502,12 @@ export class DrizzleAdapter implements DBAdapter, BudgetStorageAdapter, LeaseSto
         assertTenantId(tenantId);
         const rows = await this.db.update(manualTasks).set({ status: outcome, outcomeLabel: outcome === 'COMPLETED' ? 'manual-confirmed' : 'uncertain', confirmationActor: operatorId, confirmationMetadata: metadata ?? {}, completedAt: new Date() }).where(and(eq(manualTasks.id, taskId), eq(manualTasks.tenantId, tenantId), eq(manualTasks.status, 'PENDING_CONFIRMATION'))).returning();
         if (!rows[0]) throw new Error('MANUAL_TASK_TERMINAL');
+        if (rows[0].scheduledActionId) {
+            await this.finalizeCommentAction(tenantId, rows[0].scheduledActionId, {
+                status: outcome === 'COMPLETED' ? 'COMPLETED' : outcome === 'FAILED' ? 'FAILED' : 'UNCERTAIN',
+                outcomeLabel: rows[0].outcomeLabel as import('../types.js').ScheduledAction['outcomeLabel'],
+            }, operatorId);
+        }
         return rows[0] as { status: string; outcomeLabel?: 'manual-confirmed' | 'uncertain' };
     }
 }

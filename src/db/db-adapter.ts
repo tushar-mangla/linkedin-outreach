@@ -32,4 +32,11 @@ export interface DBAdapter {
     createManualTask(task: { tenantId: string; scheduledActionId: string; actionType: 'LIKE' | 'COMMENT' }): Promise<{ id: string; status: 'PENDING_CONFIRMATION' }>;
     completeManualTask(tenantId: string, taskId: string, outcome: 'COMPLETED' | 'FAILED' | 'UNCERTAIN', operatorId: string, metadata?: Record<string, unknown>): Promise<{ status: string; outcomeLabel?: 'manual-confirmed' | 'uncertain' }>;
     updateScheduledActionResult(tenantId: string, actionId: string, result: { status: ScheduledAction['status']; outcomeLabel?: ScheduledAction['outcomeLabel']; errorCode?: string }): Promise<ScheduledAction | undefined>;
+    /** Atomically transitions an action and its owned comment slot, when present. */
+    finalizeCommentAction(tenantId: string, actionId: string, result: { status: ScheduledAction['status']; outcomeLabel?: ScheduledAction['outcomeLabel']; errorCode?: string }, operatorId?: string): Promise<ScheduledAction | undefined>;
+    finalizeEngagementAction?(tenantId: string, actionId: string, result: { status: ScheduledAction['status']; outcomeLabel?: ScheduledAction['outcomeLabel']; errorCode?: string }, operatorId?: string): Promise<ScheduledAction | undefined>;
+    checkEngagementCooldown?(tenantId: string, prospectId: string, actionType: 'like' | 'comment', now?: Date): Promise<{ allowed: boolean; reason?: string; nextAllowedAt?: Date }>;
+    isCommentSlotOwner(tenantId: string, accountId: string, actionId: string, canonicalPostIdentifier?: string): Promise<boolean>;
+    recoverStaleClaims?(ttlMs?: number, tenantId?: string, accountId?: string): Promise<number>;
 }
+

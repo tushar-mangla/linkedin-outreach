@@ -38,8 +38,9 @@ export class CooldownPolicy {
    * Check if a COMMENT action is allowed for this prospect.
    * @param prospectId - the prospect being targeted
    * @param history    - all engagement_history records for this tenant (today)
+   * @param now        - optional evaluation timestamp (defaults to current date)
    */
-  checkComment(prospectId: string, history: EngagementHistory[]): CooldownCheckResult {
+  checkComment(prospectId: string, history: EngagementHistory[], now: Date = new Date()): CooldownCheckResult {
     const comments = history.filter(
       (h) => h.actionType === 'COMMENT' && h.prospectId === prospectId,
     );
@@ -48,7 +49,7 @@ export class CooldownPolicy {
       const lastComment = comments.sort(
         (a, b) => b.interactedAt.getTime() - a.interactedAt.getTime(),
       )[0];
-      const elapsed = Date.now() - lastComment.interactedAt.getTime();
+      const elapsed = now.getTime() - lastComment.interactedAt.getTime();
       if (elapsed < this.commentCooldownMs) {
         const nextAllowedAt = new Date(
           lastComment.interactedAt.getTime() + this.commentCooldownMs,
@@ -63,7 +64,7 @@ export class CooldownPolicy {
 
     // Daily cap check
     const todayComments = history.filter(
-      (h) => h.actionType === 'COMMENT' && this.isToday(h.interactedAt),
+      (h) => h.actionType === 'COMMENT' && this.isToday(h.interactedAt, now),
     );
     if (todayComments.length >= this.dailyCommentCap) {
       return {
@@ -78,7 +79,7 @@ export class CooldownPolicy {
   /**
    * Check if a LIKE action is allowed for this prospect.
    */
-  checkLike(prospectId: string, history: EngagementHistory[]): CooldownCheckResult {
+  checkLike(prospectId: string, history: EngagementHistory[], now: Date = new Date()): CooldownCheckResult {
     const likes = history.filter(
       (h) => h.actionType === 'LIKE' && h.prospectId === prospectId,
     );
@@ -87,7 +88,7 @@ export class CooldownPolicy {
       const lastLike = likes.sort(
         (a, b) => b.interactedAt.getTime() - a.interactedAt.getTime(),
       )[0];
-      const elapsed = Date.now() - lastLike.interactedAt.getTime();
+      const elapsed = now.getTime() - lastLike.interactedAt.getTime();
       if (elapsed < this.likeCooldownMs) {
         const nextAllowedAt = new Date(
           lastLike.interactedAt.getTime() + this.likeCooldownMs,
@@ -102,7 +103,7 @@ export class CooldownPolicy {
 
     // Daily cap check
     const todayLikes = history.filter(
-      (h) => h.actionType === 'LIKE' && this.isToday(h.interactedAt),
+      (h) => h.actionType === 'LIKE' && this.isToday(h.interactedAt, now),
     );
     if (todayLikes.length >= this.dailyLikeCap) {
       return {
@@ -114,8 +115,7 @@ export class CooldownPolicy {
     return { allowed: true };
   }
 
-  private isToday(date: Date): boolean {
-    const now = new Date();
+  private isToday(date: Date, now: Date = new Date()): boolean {
     return (
       date.getFullYear() === now.getFullYear() &&
       date.getMonth() === now.getMonth() &&

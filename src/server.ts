@@ -4,7 +4,7 @@ import './logger.js'; // Must be imported early to intercept console logs
 import express from 'express';
 import fs from 'node:fs';
 import path from 'node:path';
-import { db, withTenantTransaction } from './db/client.js';
+import { db, withTenantTransaction, isTransientDbError, withDbRetry } from './db/client.js';
 import { and, asc, desc, eq, gte, inArray } from 'drizzle-orm';
 import { icpDefinitions, importBatches, prospects, engagementPosts, engagementControls, browserAccounts, auditEvents, scheduledActions, reviewDecisions, icpEvaluations, manualTasks, executionEvidence, engagementHistory, campaignEnrollments, campaigns } from './db/schema.js';
 import { IcpCriteriaSchema } from './schemas/icp.js';
@@ -65,6 +65,25 @@ function errorResponse(error: unknown) {
   return error instanceof Error ? error.message : 'Unexpected server error';
 }
 
+function handleDbError(
+  err: unknown,
+  res: express.Response,
+  req: express.Request,
+  fallbackCode = 'POST_NOT_ELIGIBLE',
+  fallbackStatus = 500,
+) {
+  if (isTransientDbError(err)) {
+    return res
+      .set('Retry-After', '5')
+      .status(503)
+      .json(structuredRefusal('DB_UNAVAILABLE', errorResponse(err), correlationOf(req)));
+  }
+  return res
+    .status(fallbackStatus)
+    .json(structuredRefusal(fallbackCode, errorResponse(err), correlationOf(req)));
+}
+
+
 // ─── Build EngagementService ──────────────────────────────────────────────────
 // Use Luna if CODEX_EVERYWHERE_API_KEY is set, else fall back to fake provider.
 // Browser discovery is Feature 0.5-only and remains fixture-first by default.
@@ -110,23 +129,23 @@ function buildQueueForMode(mode: string): ActionQueueService {
       const actionType = String(action.actionType).toUpperCase() as 'LIKE' | 'COMMENT';
       return withRequestTenantUnsafe(tenantId, async () => {
         const revision = revisionId
-          ? await db.query.recommendationRevisions.findFirst({ where: eq(recommendationRevisions.id, revisionId) })
+          ? await withDbRetry(() => db.query.recommendationRevisions.findFirst({ where: eq(recommendationRevisions.id, revisionId) }))
           : undefined;
         const approval = revision
-          ? await db.query.recommendationApprovals.findFirst({ where: eq(recommendationApprovals.revisionId, revision.id) })
+          ? await withDbRetry(() => db.query.recommendationApprovals.findFirst({ where: eq(recommendationApprovals.revisionId, revision.id) }))
           : undefined;
         const approvalCurrent = !!revision && revision.state === 'APPROVED' && approval?.state === 'APPROVED' && (!approval.expiresAt || approval.expiresAt > new Date()) && revision.postHash === postHash;
-        const control = await db.query.engagementControls.findFirst({ where: and(eq(engagementControls.tenantId, tenantId), eq(engagementControls.accountId, action.accountId), eq(engagementControls.actionType, actionType)) });
-        const account = await db.query.browserAccounts.findFirst({ where: and(eq(browserAccounts.tenantId, tenantId), eq(browserAccounts.id, action.accountId)) });
+        const control = await withDbRetry(() => db.query.engagementControls.findFirst({ where: and(eq(engagementControls.tenantId, tenantId), eq(engagementControls.accountId, action.accountId), eq(engagementControls.actionType, actionType)) }));
+        const account = await withDbRetry(() => db.query.browserAccounts.findFirst({ where: and(eq(browserAccounts.tenantId, tenantId), eq(browserAccounts.id, action.accountId)) }));
         // Persistence-backed prospect readiness: the tenant-owned prospect behind
         // the claimed action must be campaign-ready (schema: currentStage).
-        const prospect = await db.query.prospects.findFirst({ where: and(eq(prospects.tenantId, tenantId), eq(prospects.id, action.prospectId)) });
+        const prospect = await withDbRetry(() => db.query.prospects.findFirst({ where: and(eq(prospects.tenantId, tenantId), eq(prospects.id, action.prospectId)) }));
         const prospectReady = prospect?.currentStage === 'READY_FOR_CAMPAIGN';
         // Persistence-backed post eligibility: the tenant-owned post matching the
         // claimed action's hash must exist. Where the row carries an explicit
         // eligibility decision it must be ELIGIBLE (fail closed otherwise).
         const post = postHash
-          ? await db.query.engagementPosts.findFirst({ where: and(eq(engagementPosts.tenantId, tenantId), eq(engagementPosts.contentHash, postHash)) })
+          ? await withDbRetry(() => db.query.engagementPosts.findFirst({ where: and(eq(engagementPosts.tenantId, tenantId), eq(engagementPosts.contentHash, postHash)) }))
           : undefined;
         const eligibilityDecision = (post as unknown as { eligibilityDecision?: string } | undefined)?.eligibilityDecision;
         const postEligible = !!post && (eligibilityDecision === undefined || eligibilityDecision === 'ELIGIBLE');
@@ -137,7 +156,7 @@ function buildQueueForMode(mode: string): ActionQueueService {
         // when no budget row exists for this tenant/account/action/day).
         const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0);
         const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000);
-        const budgets = await db.query.dailyActionBudgets.findMany({ where: and(eq(dailyActionBudgets.tenantId, tenantId), eq(dailyActionBudgets.accountId, action.accountId)) });
+        const budgets = await withDbRetry(() => db.query.dailyActionBudgets.findMany({ where: and(eq(dailyActionBudgets.tenantId, tenantId), eq(dailyActionBudgets.accountId, action.accountId)) }));
         const budget = budgets.find((row) => String(row.actionType).toUpperCase() === actionType && row.budgetDate >= dayStart && row.budgetDate < dayEnd)
           ?? budgets.find((row) => String(row.actionType).toUpperCase() === actionType);
         const budgetAvailable = budget ? budget.reservedCount + budget.completedCount < budget.limit : false;
@@ -484,7 +503,10 @@ app.post('/api/prospects/discover', async (request, response) => {
             }).onConflictDoNothing());
 
             try {
-              await withRequestTenant(request, () => engagementService.scanProspect(tId, p.id));
+              const scanRes = await withRequestTenant(request, () => engagementService.scanProspect(tId, p.id));
+              if (scanRes.errors && scanRes.errors.length > 0) {
+                console.warn(`[Ingest] Auto-scan for prospect ${p.id} had errors:`, scanRes.errors);
+              }
             } catch (scanErr) {
               console.warn(`Auto-scan for prospect ${p.id} skipped or failed: ${(scanErr as Error).message}`);
             }
@@ -640,10 +662,12 @@ app.post('/api/engagement/scan', async (req, res) => {
 app.get('/api/engagement/posts', async (req, res) => {
   try {
     const tenantId = tenantOf(req);
-    const rows = await withRequestTenant(req, () => db.select().from(engagementPosts).where(eq(engagementPosts.tenantId, tenantId)).orderBy(desc(engagementPosts.createdAt)));
+    const rows = await withRequestTenant(req, () =>
+      withDbRetry(() => db.select().from(engagementPosts).where(eq(engagementPosts.tenantId, tenantId)).orderBy(desc(engagementPosts.createdAt)))
+    );
     res.json(rows);
   } catch (err) {
-    res.status(500).json(structuredRefusal('POST_NOT_ELIGIBLE', errorResponse(err), correlationOf(req)));
+    handleDbError(err, res, req, 'POST_NOT_ELIGIBLE', 500);
   }
 });
 
@@ -652,23 +676,52 @@ app.get('/api/engagement/drafts', async (req, res) => {
     const tenantId = tenantOf(req);
     const status = req.query.status as string | undefined;
     const drafts = status === 'ALL'
-      ? await withRequestTenant(req, () => engagementService.listAllDrafts(tenantId))
-      : await withRequestTenant(req, () => engagementService.listPendingDrafts(tenantId));
+      ? await withRequestTenant(req, () => withDbRetry(() => engagementService.listAllDrafts(tenantId)))
+      : await withRequestTenant(req, () => withDbRetry(() => engagementService.listPendingDrafts(tenantId)));
 
     const enriched = await withRequestTenant(req, () => Promise.all(
       drafts.map(async (draft) => {
-        const post = await db.query.engagementPosts.findFirst({
+        const post = await withDbRetry(() => db.query.engagementPosts.findFirst({
           where: eq(engagementPosts.id, draft.postId),
-        });
+        }));
         return { ...draft, post };
       }),
     ));
 
     res.json(enriched);
   } catch (err) {
-    res.status(500).json(structuredRefusal('POST_NOT_ELIGIBLE', errorResponse(err), correlationOf(req)));
+    handleDbError(err, res, req, 'POST_NOT_ELIGIBLE', 500);
   }
 });
+
+let scanResumeRunning = false;
+app.post('/api/engagement/resume', async (req, res) => {
+  if (scanResumeRunning) {
+    return res.json({ status: 'already_running', correlationId: correlationOf(req) });
+  }
+  scanResumeRunning = true;
+  try {
+    const tenantId = tenantOf(req);
+    const campaignId = typeof req.body?.campaignId === 'string' && req.body.campaignId.trim() !== ''
+      ? req.body.campaignId.trim()
+      : undefined;
+    const result = await withRequestTenant(req, () =>
+      engagementService.scanCampaignResume(tenantId, campaignId)
+    );
+    res.json({
+      status: 'completed',
+      prospectsScanned: result.prospectsScanned,
+      draftsBackfilled: result.draftsBackfilled,
+      errors: result.errors,
+      correlationId: correlationOf(req),
+    });
+  } catch (err) {
+    handleDbError(err, res, req, 'PROVIDER_UNAVAILABLE', 500);
+  } finally {
+    scanResumeRunning = false;
+  }
+});
+
 
 app.post('/api/engagement/drafts/:id/decision', async (req, res) => {
   try {
@@ -943,12 +996,11 @@ app.post('/api/queue/retry-failed', async (req, res) => {
     const since = new Date(Date.now() - windowHours * 60 * 60 * 1000);
     const result = await withRequestTenant(req, () =>
       db.update(scheduledActions)
-        .set({ status: 'FAILED', errorCode: 'RESET_FOR_RETRY', outcomeLabel: 'failed' })
+        .set({ status: 'PENDING', errorCode: null, outcomeLabel: null, completedAt: null, claimToken: null, claimedBy: null, claimedAt: null })
         .where(
           and(
             eq(scheduledActions.tenantId, tenantId),
-            eq(scheduledActions.status, 'COMPLETED'),
-            eq(scheduledActions.actionType, 'comment'),
+            eq(scheduledActions.status, 'FAILED'),
             gte(scheduledActions.createdAt, since)
           )
         )
@@ -1007,12 +1059,16 @@ async function runAutoDrainCycle(): Promise<void> {
   }
   
   autoDrainRunning = true;
+  let leaseInfo: { tenantId: string; accountId: string; token: string } | undefined;
+
   try {
     // Find the oldest PENDING action to determine which tenant/account/mode to use
-    const pending = await db.query.scheduledActions.findFirst({
-      where: eq(scheduledActions.status, 'PENDING'),
-      orderBy: [asc(scheduledActions.scheduledFor), asc(scheduledActions.createdAt)],
-    });
+    const pending = await withDbRetry(() =>
+      db.query.scheduledActions.findFirst({
+        where: eq(scheduledActions.status, 'PENDING'),
+        orderBy: [asc(scheduledActions.scheduledFor), asc(scheduledActions.createdAt)],
+      })
+    );
     if (!pending) return; // Nothing to do
 
     const tenantId = String(pending.tenantId);
@@ -1034,11 +1090,12 @@ async function runAutoDrainCycle(): Promise<void> {
       console.log('[AutoDrain] Could not acquire lease — another worker may be active.');
       return;
     }
+    leaseInfo = { tenantId, accountId, token: leaseResult.leaseToken };
 
     // Process one action
     const queue = buildQueueForMode(persistedMode);
     const result = await withRequestTenantUnsafe(tenantId, () =>
-      queue.processNextAction(tenantId, accountId, AUTO_DRAIN_WORKER_ID, leaseResult.leaseToken!)
+      queue.processNextAction(tenantId, accountId, AUTO_DRAIN_WORKER_ID, leaseInfo!.token)
     );
 
     if (result.processed) {
@@ -1058,17 +1115,19 @@ async function runAutoDrainCycle(): Promise<void> {
       } else if (result.result?.outcomeLabel && result.result?.outcomeLabel !== 'failed') {
          // Reset consecutive errors if an action succeeds
          consecutiveSessionFailures = 0;
-         
+
          // If they want 'one like and one comment' together, let's peek and see if the immediate next action belongs to the same prospect.
-         const nextPending = await db.query.scheduledActions.findFirst({
-           where: eq(scheduledActions.status, 'PENDING'),
-           orderBy: [asc(scheduledActions.scheduledFor), asc(scheduledActions.createdAt)],
-         });
+         const nextPending = await withDbRetry(() =>
+           db.query.scheduledActions.findFirst({
+             where: eq(scheduledActions.status, 'PENDING'),
+             orderBy: [asc(scheduledActions.scheduledFor), asc(scheduledActions.createdAt)],
+           })
+         );
          
          if (nextPending && nextPending.prospectId === result.action?.prospectId) {
            console.log(`[AutoDrain] Found paired action for same prospect. Processing immediately...`);
            const result2 = await withRequestTenantUnsafe(tenantId, () =>
-             queue.processNextAction(tenantId, accountId, AUTO_DRAIN_WORKER_ID, leaseResult.leaseToken!)
+             queue.processNextAction(tenantId, accountId, AUTO_DRAIN_WORKER_ID, leaseInfo!.token)
            );
            if (result2.processed) {
              console.log(`[AutoDrain] ✓ ${result2.action?.actionType?.toUpperCase()} (paired) → ${result2.result?.outcomeLabel ?? result2.reason ?? 'done'}`);
@@ -1076,16 +1135,26 @@ async function runAutoDrainCycle(): Promise<void> {
          }
       }
     } else {
-      console.log(`[AutoDrain] Queue empty or skipped: ${result.reason}`);
+      if (result.reason === 'DB_RETRYABLE') {
+        console.log('[AutoDrain] Action returned to PENDING due to transient DB issue; will retry next cycle.');
+      } else {
+        console.log(`[AutoDrain] Queue empty or skipped: ${result.reason}`);
+      }
     }
-
-    // Release the lease so the next cycle can run on time
-    await withRequestTenantUnsafe(tenantId, () => 
-      leaseService.releaseLease(tenantId, accountId, AUTO_DRAIN_WORKER_ID, leaseResult.leaseToken!)
-    );
   } catch (err) {
     console.error('[AutoDrain] Error:', (err as Error).message);
   } finally {
+    if (leaseInfo) {
+      try {
+        const adapter = new DrizzleAdapter(db as never);
+        const leaseService = new LeaseService(adapter);
+        await withRequestTenantUnsafe(leaseInfo.tenantId, () => 
+          leaseService.releaseLease(leaseInfo!.tenantId, leaseInfo!.accountId, AUTO_DRAIN_WORKER_ID, leaseInfo!.token)
+        );
+      } catch (releaseErr) {
+        console.warn('[AutoDrain] Failed to release lease in finally block:', (releaseErr as Error).message);
+      }
+    }
     autoDrainRunning = false;
   }
 }
@@ -1101,70 +1170,114 @@ async function autoApproveAndQueueCycle(): Promise<void> {
   autoApproveRunning = true;
   try {
     // Check if the queue already has PENDING items. If it does, wait for it to drain first.
-    const existingQueueCount = await db.query.scheduledActions.findMany({
-      where: eq(scheduledActions.status, 'PENDING')
-    });
+    const existingQueueCount = await withDbRetry(() =>
+      db.query.scheduledActions.findMany({
+        where: eq(scheduledActions.status, 'PENDING')
+      })
+    );
     
     if (existingQueueCount.length > 0) {
       return;
     }
 
-    const pendingDrafts = await db.query.engagementDrafts.findMany({
-      where: eq(engagementDrafts.status, 'PENDING')
-    });
+    const pendingDrafts = await withDbRetry(() =>
+      db.query.engagementDrafts.findMany({
+        where: eq(engagementDrafts.status, 'PENDING')
+      })
+    );
+
+    const approvedDrafts = await withDbRetry(() =>
+      db.query.engagementDrafts.findMany({
+        where: eq(engagementDrafts.status, 'APPROVED')
+      })
+    );
+
+    const draftsToProcess = [
+      ...pendingDrafts.map((d) => ({ draft: d, needsApproval: true })),
+      ...approvedDrafts.map((d) => ({ draft: d, needsApproval: false })),
+    ];
     
-    if (pendingDrafts.length > 0) {
-      console.log(`[AutoQueue] Found ${pendingDrafts.length} pending drafts. Auto-approving...`);
+    if (draftsToProcess.length > 0) {
+      console.log(`[AutoQueue] Processing ${pendingDrafts.length} pending and ${approvedDrafts.length} approved drafts...`);
     }
     
-    for (const draft of pendingDrafts) {
+    for (const { draft, needsApproval } of draftsToProcess) {
       const tenantId = String(draft.tenantId);
       
-      // 1. Approve
-      await withRequestTenantUnsafe(tenantId, () => 
-        engagementService.applyReviewDecision({
-          draftId: draft.id,
-          tenantId,
-          decision: 'APPROVED',
-          operatorId: 'system-auto'
-        })
-      );
+      // 1. Approve if needed
+      if (needsApproval) {
+        await withDbRetry(() =>
+          withRequestTenantUnsafe(tenantId, () => 
+            engagementService.applyReviewDecision({
+              draftId: draft.id,
+              tenantId,
+              decision: 'APPROVED',
+              operatorId: 'system-auto'
+            })
+          )
+        );
+      }
       
       // 2. Queue
       const mode = process.env.FEATURE_05_BROWSER_ENABLED === '1' ? 'BROWSER' : 'SIMULATE';
       const accountId = '00000000-0000-0000-0000-000000000002'; // default
-      await withRequestTenantUnsafe(tenantId, () => ensureSupervisedDefaults(tenantId, accountId));
+      await withDbRetry(() =>
+        withRequestTenantUnsafe(tenantId, () => ensureSupervisedDefaults(tenantId, accountId))
+      );
       
       try {
-        await withRequestTenantUnsafe(tenantId, () =>
-          engagementService.requestAction({
-            draftId: draft.id,
-            tenantId,
-            actionType: draft.actionType as 'LIKE' | 'COMMENT',
-            mode,
-            accountId,
-            idempotencyKey: `auto-${draft.id}-${Date.now()}`
-          })
+        await withDbRetry(() =>
+          withRequestTenantUnsafe(tenantId, () =>
+            engagementService.requestAction({
+              draftId: draft.id,
+              tenantId,
+              actionType: draft.actionType as 'LIKE' | 'COMMENT',
+              mode,
+              accountId,
+              idempotencyKey: `auto-${draft.id}`
+            })
+          )
         );
         console.log(`[AutoQueue] Automatically queued ${draft.actionType} for draft ${draft.id}`);
       } catch (err: any) {
-        if (err.message !== 'ACTION_DUPLICATE') {
+        if (
+          err.message !== 'ACTION_DUPLICATE' &&
+          err.message !== 'POST_ALREADY_COMMENTED' &&
+          err.message !== 'POST_EXECUTION_UNCERTAIN'
+        ) {
           console.error(`[AutoQueue] Failed to queue draft ${draft.id}:`, err);
         }
       }
     }
   } catch (err) {
-    console.error(`[AutoQueue] Cycle failed:`, err);
+    console.error(`[AutoQueue] Cycle failed:`, (err as Error).message);
   } finally {
     autoApproveRunning = false;
+  }
+}
+
+async function runScanResumeCycle(): Promise<void> {
+  if (scanResumeRunning) return;
+  scanResumeRunning = true;
+  try {
+    const result = await engagementService.scanCampaignResume();
+    if (result.prospectsScanned > 0 || result.draftsBackfilled > 0) {
+      console.log(`[ScanResume] Periodic resume completed: scanned ${result.prospectsScanned} prospects, backfilled ${result.draftsBackfilled} drafts.`);
+    }
+  } catch (err) {
+    console.error('[ScanResume] Periodic resume cycle error:', (err as Error).message);
+  } finally {
+    scanResumeRunning = false;
   }
 }
 
 if (process.env.VITEST !== 'true' && process.env.NODE_ENV !== 'test') {
   setInterval(runAutoDrainCycle, AUTO_DRAIN_GAP_MS);
   setInterval(autoApproveAndQueueCycle, 30_000); // Check for new drafts every 30s
+  setInterval(runScanResumeCycle, 10 * 60 * 1000); // Scan resume worker every 10m
   console.log(`[AutoDrain] Server-side queue drain worker started (gap: ${AUTO_DRAIN_GAP_MS / 1000}s)`);
   console.log(`[AutoQueue] Auto-approve and queue worker started (every 30s)`);
+  console.log(`[ScanResume] Campaign scan resume worker started (every 10m)`);
   listenWithFallback(port);
 }
 

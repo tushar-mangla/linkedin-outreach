@@ -1,16 +1,13 @@
 
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
-import pg from 'pg';
-const { Pool } = pg;
 import { config } from 'dotenv';
+import { createPool } from './db/client.js';
 
 config();
 
 const runMigrations = async () => {
-  const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-  });
+  const pool = createPool({ max: 2 });
 
   const db = drizzle(pool);
 
@@ -25,3 +22,4 @@ runMigrations().catch((err) => {
   console.error(err);
   process.exit(1);
 });
+

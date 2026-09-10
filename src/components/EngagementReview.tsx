@@ -8,6 +8,7 @@ interface EngagementReviewProps {
   campaignDrafts: Record<string, any[]>;
   prospectsState: 'loading' | 'ready' | 'empty' | 'error';
   actionStatusByDraft: Record<string, 'executing' | 'executed' | 'failed'>;
+  queueActions: any[];
   actionMode: string;
   isCampaignRunning: boolean;
   onSelectCampaign: (campaignId: string) => void;
@@ -27,6 +28,7 @@ export function EngagementReview({
   campaignDrafts,
   prospectsState,
   actionStatusByDraft,
+  queueActions,
   actionMode,
   isCampaignRunning,
   onSelectCampaign,
@@ -39,7 +41,7 @@ export function EngagementReview({
   onSkipCommentWithLike,
 }: EngagementReviewProps) {
   // Check if any drafts across all prospects have failed status
-  const hasFailedDrafts = prospects.some((p) =>
+  const hasFailedDrafts = queueActions.some((a) => a.status === 'FAILED') || prospects.some((p) =>
     (campaignDrafts[p.id] ?? []).some(
       (d: any) => d.actionType === 'COMMENT' && actionStatusByDraft[d.id] === 'failed'
     )

@@ -1,62 +1,780 @@
-[2026-09-07T10:50:19.802Z] [ERROR] (node:44475) Warning: SECURITY WARNING: The SSL modes 'prefer', 'require', and 'verify-ca' are treated as aliases for 'verify-full'.
-In the next major version (pg-connection-string v3.0.0 and pg v9.0.0), these modes will adopt standard libpq semantics, which have weaker security guarantees.
-
-To prepare for this change:
-- If you want the current behavior, explicitly use 'sslmode=verify-full'
-- If you want libpq compatibility now, use 'uselibpqcompat=true&sslmode=require'
-
-See https://www.postgresql.org/docs/current/libpq-ssl.html for libpq SSL mode definitions.
-(Use `node --trace-warnings ...` to show where the warning was created)
-[2026-09-07T10:50:49.227Z] [INFO] AUDIT LOG: {"batchId":"4a617081-f8ba-46b3-b2e5-90c503df6072","tenantId":"00000000-0000-0000-0000-000000000001","icpDefinitionId":"6540a665-07f0-4952-9508-8f90d9bf10cf","filename":"opencli-linkedin-discovery-p1.csv","totalRows":10,"processedRows":10,"qualifiedCount":0,"rejectedCount":4,"reviewCount":6,"status":"COMPLETED","timestamp":"2026-09-07T10:50:49.227Z"} HASH: bc842905e1a3b27cf1e6b047f09005e459d74848697bd9035f50a6f3e41637e7
-[2026-09-07T10:51:34.536Z] [INFO] [AutoQueue] Found 1 pending drafts. Auto-approving...
-[2026-09-07T10:51:41.213Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 838fddee-a837-457e-bb99-6934817a99ec
-[2026-09-07T10:53:06.132Z] [INFO] [AutoQueue] Found 5 pending drafts. Auto-approving...
-[2026-09-07T10:53:12.681Z] [INFO] [AutoQueue] Automatically queued COMMENT for draft 5e4926b1-ae2e-4993-bef9-0be648a2d984
-[2026-09-07T10:53:19.439Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 82a8ae4e-63c9-4944-87d0-76f9eb8e3450
-[2026-09-07T10:53:21.666Z] [ERROR] [AutoDrain] ✗ LIKE FAILED → SELECTOR_MISMATCH
-[2026-09-07T10:53:25.812Z] [INFO] [AutoQueue] Automatically queued COMMENT for draft fcaa1909-781d-4a61-8148-79ebdb31e13f
-[2026-09-07T10:53:32.514Z] [INFO] [AutoQueue] Automatically queued LIKE for draft f34bf120-07e2-4823-8995-6dcae1702f7c
-[2026-09-07T10:53:38.974Z] [INFO] [AutoQueue] Automatically queued LIKE for draft de0f4f12-5257-41ae-b89e-d0d810972d69
-[2026-09-07T10:56:30.386Z] [ERROR] [AutoDrain] ✗ COMMENT FAILED → SELECTOR_MISMATCH
-[2026-09-07T10:57:29.411Z] [INFO] ◇ injected env (0) from .env [2m// tip: ◈ encrypted .env [www.dotenvx.com][0m
-[2026-09-07T10:57:29.416Z] [INFO] [AutoDrain] Server-side queue drain worker started (gap: 180s)
-[2026-09-07T10:57:29.416Z] [INFO] [AutoQueue] Auto-approve and queue worker started (every 30s)
-[2026-09-07T10:57:29.419Z] [INFO] RecruitmentOS ICP server listening on http://localhost:3000
-[2026-09-07T10:57:40.865Z] [INFO] ◇ injected env (0) from .env [2m// tip: ⌘ multiple files { path: ['.env.local', '.env'] }[0m
-[2026-09-07T10:57:40.870Z] [INFO] [AutoDrain] Server-side queue drain worker started (gap: 180s)
-[2026-09-07T10:57:40.870Z] [INFO] [AutoQueue] Auto-approve and queue worker started (every 30s)
-[2026-09-07T10:57:40.871Z] [INFO] RecruitmentOS ICP server listening on http://localhost:3000
-[2026-09-07T10:57:49.816Z] [INFO] ◇ injected env (0) from .env [2m// tip: ◈ secrets for agents [www.dotenvx.com][0m
-[2026-09-07T10:57:49.822Z] [INFO] [AutoDrain] Server-side queue drain worker started (gap: 180s)
-[2026-09-07T10:57:49.822Z] [INFO] [AutoQueue] Auto-approve and queue worker started (every 30s)
-[2026-09-07T10:57:49.823Z] [INFO] RecruitmentOS ICP server listening on http://localhost:3000
-[2026-09-07T10:57:59.815Z] [INFO] ◇ injected env (0) from .env [2m// tip: ⌁ auth for agents [www.vestauth.com][0m
-[2026-09-07T10:57:59.820Z] [INFO] [AutoDrain] Server-side queue drain worker started (gap: 180s)
-[2026-09-07T10:57:59.820Z] [INFO] [AutoQueue] Auto-approve and queue worker started (every 30s)
-[2026-09-07T10:57:59.821Z] [INFO] RecruitmentOS ICP server listening on http://localhost:3000
-[2026-09-07T10:58:13.265Z] [INFO] ◇ injected env (0) from .env [2m// tip: ◈ secrets for agents [www.dotenvx.com][0m
-[2026-09-07T10:58:13.276Z] [INFO] [AutoDrain] Server-side queue drain worker started (gap: 180s)
-[2026-09-07T10:58:13.276Z] [INFO] [AutoQueue] Auto-approve and queue worker started (every 30s)
-[2026-09-07T10:58:13.278Z] [INFO] RecruitmentOS ICP server listening on http://localhost:3000
-[2026-09-07T10:58:53.491Z] [INFO] ◇ injected env (0) from .env [2m// tip: ⌘ enable debugging { debug: true }[0m
-[2026-09-07T10:58:53.501Z] [INFO] [AutoDrain] Server-side queue drain worker started (gap: 180s)
-[2026-09-07T10:58:53.501Z] [INFO] [AutoQueue] Auto-approve and queue worker started (every 30s)
-[2026-09-07T10:58:53.502Z] [INFO] RecruitmentOS ICP server listening on http://localhost:3000
-[2026-09-07T11:02:09.766Z] [INFO] [AutoDrain] ✓ LIKE → browser-executed
-[2026-09-07T11:02:10.032Z] [INFO] [AutoDrain] Found paired action for same prospect. Processing immediately...
-[2026-09-07T11:02:30.225Z] [INFO] [AutoDrain] ✓ COMMENT (paired) → browser-executed
-[2026-09-07T11:05:03.642Z] [INFO] [AutoDrain] ✓ LIKE → browser-executed
-[2026-09-07T11:05:03.968Z] [INFO] [AutoDrain] Found paired action for same prospect. Processing immediately...
-[2026-09-07T11:05:23.445Z] [INFO] [AutoDrain] ✓ COMMENT (paired) → browser-executed
-[2026-09-07T11:08:09.826Z] [INFO] [AutoDrain] ✓ LIKE → browser-executed
-[2026-09-07T11:08:10.747Z] [INFO] [AutoDrain] Found paired action for same prospect. Processing immediately...
-[2026-09-07T11:08:30.616Z] [INFO] [AutoDrain] ✓ COMMENT (paired) → browser-executed
-[2026-09-07T11:11:03.749Z] [INFO] [AutoDrain] ✓ LIKE → browser-executed
-[2026-09-07T11:11:04.015Z] [INFO] [AutoDrain] Found paired action for same prospect. Processing immediately...
-[2026-09-07T11:11:22.269Z] [INFO] [AutoDrain] ✓ COMMENT (paired) → browser-executed
-[2026-09-07T11:14:10.943Z] [INFO] [AutoDrain] ✓ LIKE → browser-executed
-[2026-09-07T11:14:11.286Z] [INFO] [AutoDrain] Found paired action for same prospect. Processing immediately...
-[2026-09-07T11:14:30.520Z] [INFO] [AutoDrain] ✓ COMMENT (paired) → browser-executed
-[2026-09-07T11:17:03.693Z] [INFO] [AutoDrain] ✓ LIKE → browser-executed
-[2026-09-07T11:17:03.958Z] [INFO] [AutoDrain] Found paired action for same prospect. Processing immediately...
-[2026-09-07T11:17:22.433Z] [INFO] [AutoDrain] ✓ COMMENT (paired) → browser-executed
+[2026-09-10T08:42:16.075Z] [INFO] AUDIT LOG: {"batchId":"48f27da4-e96a-4568-adcb-aa6ce818e621","tenantId":"00000000-0000-0000-0000-000000000001","icpDefinitionId":"6540a665-07f0-4952-9508-8f90d9bf10cf","filename":"opencli-linkedin-discovery-p4.csv","totalRows":10,"processedRows":10,"qualifiedCount":0,"rejectedCount":4,"reviewCount":6,"status":"COMPLETED","timestamp":"2026-09-10T08:42:16.075Z"} HASH: ba24e47cbfe56e0d12d3e01f2983e9d46f3362bb621af965f8b3da806513e291
+[2026-09-10T08:42:48.046Z] [INFO] [AutoQueue] Found 1 pending drafts. Auto-approving...
+[2026-09-10T08:42:54.840Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 07d3deed-fc81-4a23-8b18-93673e9fd9e4
+[2026-09-10T08:43:43.387Z] [INFO] [ProfileActivityPostSource] OpenCLI fetched 5 posts for https://www.linkedin.com/in/noelcocca
+[2026-09-10T08:45:36.697Z] [INFO] [AutoDrain] ✓ LIKE → browser-executed
+[2026-09-10T08:45:46.434Z] [INFO] [AutoQueue] Found 4 pending drafts. Auto-approving...
+[2026-09-10T08:45:53.384Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 31843878-e86a-4411-b7ec-261e749b4307
+[2026-09-10T08:46:00.748Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 712821c1-4943-4e82-a7d6-56204458ae16
+[2026-09-10T08:46:07.538Z] [INFO] [AutoQueue] Automatically queued LIKE for draft fa6db8dd-5348-4a2e-a36e-36ee35d7cce0
+[2026-09-10T08:46:14.531Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 41ca5161-4014-4936-8d13-8c851d1c8bea
+[2026-09-10T08:47:37.077Z] [INFO] [ProfileActivityPostSource] OpenCLI fetched 2 posts for https://www.linkedin.com/in/jeff-rucinski-3267086
+[2026-09-10T08:48:32.109Z] [INFO] [AutoDrain] ✓ LIKE → browser-executed
+[2026-09-10T08:49:20.567Z] [INFO] [ProfileActivityPostSource] OpenCLI fetched 5 posts for https://www.linkedin.com/in/larry-mims-9713575
+[2026-09-10T08:51:40.521Z] [INFO] [AutoDrain] ✓ LIKE → browser-executed
+[2026-09-10T08:54:42.169Z] [INFO] [AutoDrain] ✓ LIKE → browser-executed
+[2026-09-10T08:57:34.193Z] [INFO] [AutoDrain] ✓ LIKE → browser-executed
+[2026-09-10T08:57:48.333Z] [INFO] [AutoQueue] Found 5 pending drafts. Auto-approving...
+[2026-09-10T08:57:55.561Z] [INFO] [AutoQueue] Automatically queued LIKE for draft ffd784d0-d919-4f62-9e18-bf147feb91d3
+[2026-09-10T08:58:02.763Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 47cc52c3-03fd-4910-ac39-244d5feac9c3
+[2026-09-10T08:58:10.408Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 562ceaf5-ab54-4c50-971e-8c3ce0974083
+[2026-09-10T08:58:18.332Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 58cd93cc-4db3-49c3-a6c8-3ef3fdef7d97
+[2026-09-10T08:58:25.488Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 5ee47411-80e7-42fc-b7c6-a6346e7e7654
+[2026-09-10T09:00:37.156Z] [INFO] [AutoDrain] ✓ LIKE → browser-executed
+[2026-09-10T09:01:20.944Z] [ERROR] [AutoQueue] Cycle failed: DrizzleQueryError: Failed query: select "id", "tenant_id", "campaign_enrollment_id", "prospect_id", "account_id", "action_type", "payload", "scheduled_for", "status", "idempotency_key", "revision_id", "post_hash", "mode", "outcome_label", "error_code", "claim_token", "claimed_by", "claimed_at", "completed_at", "created_at", "updated_at" from "scheduled_actions" "scheduledActions" where "scheduledActions"."status" = $1
+params: PENDING
+    at NodePgPreparedQuery.queryWithCache (/Users/tusharmangla/Dev/outreach/linkedin-outreach/node_modules/src/pg-core/session.ts:73:11)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async <anonymous> (/Users/tusharmangla/Dev/outreach/linkedin-outreach/node_modules/src/node-postgres/session.ts:154:19)
+    at async Timeout.autoApproveAndQueueCycle (/Users/tusharmangla/Dev/outreach/linkedin-outreach/src/server.ts:1103:32) {
+  query: 'select "id", "tenant_id", "campaign_enrollment_id", "prospect_id", "account_id", "action_type", "payload", "scheduled_for", "status", "idempotency_key", "revision_id", "post_hash", "mode", "outcome_label", "error_code", "claim_token", "claimed_by", "claimed_at", "completed_at", "created_at", "updated_at" from "scheduled_actions" "scheduledActions" where "scheduledActions"."status" = $1',
+  params: [ 'PENDING' ],
+  cause: Error: Connection terminated due to connection timeout
+      at /Users/tusharmangla/Dev/outreach/linkedin-outreach/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async <anonymous> (/Users/tusharmangla/Dev/outreach/linkedin-outreach/node_modules/src/node-postgres/session.ts:161:13)
+      at async NodePgPreparedQuery.queryWithCache (/Users/tusharmangla/Dev/outreach/linkedin-outreach/node_modules/src/pg-core/session.ts:71:12)
+      at async <anonymous> (/Users/tusharmangla/Dev/outreach/linkedin-outreach/node_modules/src/node-postgres/session.ts:154:19)
+      at async Timeout.autoApproveAndQueueCycle (/Users/tusharmangla/Dev/outreach/linkedin-outreach/src/server.ts:1103:32) {
+    [cause]: Error: Connection terminated unexpectedly
+        at Connection.<anonymous> (/Users/tusharmangla/Dev/outreach/linkedin-outreach/node_modules/pg/lib/client.js:204:73)
+        at Connection.wrapper (node:events:639:12)
+        at Connection.emit (node:events:514:20)
+        at Socket.<anonymous> (/Users/tusharmangla/Dev/outreach/linkedin-outreach/node_modules/pg/lib/connection.js:64:12)
+        at Socket.emit (node:events:526:24)
+        at TCP.<anonymous> (node:net:362:12)
+  }
+}
+[2026-09-10T09:03:20.946Z] [ERROR] [AutoQueue] Cycle failed: DrizzleQueryError: Failed query: select "id", "tenant_id", "campaign_enrollment_id", "prospect_id", "account_id", "action_type", "payload", "scheduled_for", "status", "idempotency_key", "revision_id", "post_hash", "mode", "outcome_label", "error_code", "claim_token", "claimed_by", "claimed_at", "completed_at", "created_at", "updated_at" from "scheduled_actions" "scheduledActions" where "scheduledActions"."status" = $1
+params: PENDING
+    at NodePgPreparedQuery.queryWithCache (/Users/tusharmangla/Dev/outreach/linkedin-outreach/node_modules/src/pg-core/session.ts:73:11)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async <anonymous> (/Users/tusharmangla/Dev/outreach/linkedin-outreach/node_modules/src/node-postgres/session.ts:154:19)
+    at async Timeout.autoApproveAndQueueCycle (/Users/tusharmangla/Dev/outreach/linkedin-outreach/src/server.ts:1103:32) {
+  query: 'select "id", "tenant_id", "campaign_enrollment_id", "prospect_id", "account_id", "action_type", "payload", "scheduled_for", "status", "idempotency_key", "revision_id", "post_hash", "mode", "outcome_label", "error_code", "claim_token", "claimed_by", "claimed_at", "completed_at", "created_at", "updated_at" from "scheduled_actions" "scheduledActions" where "scheduledActions"."status" = $1',
+  params: [ 'PENDING' ],
+  cause: Error: Connection terminated due to connection timeout
+      at /Users/tusharmangla/Dev/outreach/linkedin-outreach/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async <anonymous> (/Users/tusharmangla/Dev/outreach/linkedin-outreach/node_modules/src/node-postgres/session.ts:161:13)
+      at async NodePgPreparedQuery.queryWithCache (/Users/tusharmangla/Dev/outreach/linkedin-outreach/node_modules/src/pg-core/session.ts:71:12)
+      at async <anonymous> (/Users/tusharmangla/Dev/outreach/linkedin-outreach/node_modules/src/node-postgres/session.ts:154:19)
+      at async Timeout.autoApproveAndQueueCycle (/Users/tusharmangla/Dev/outreach/linkedin-outreach/src/server.ts:1103:32) {
+    [cause]: Error: Connection terminated unexpectedly
+        at Connection.<anonymous> (/Users/tusharmangla/Dev/outreach/linkedin-outreach/node_modules/pg/lib/client.js:204:73)
+        at Connection.wrapper (node:events:639:12)
+        at Connection.emit (node:events:514:20)
+        at Socket.<anonymous> (/Users/tusharmangla/Dev/outreach/linkedin-outreach/node_modules/pg/lib/connection.js:64:12)
+        at Socket.emit (node:events:526:24)
+        at TCP.<anonymous> (node:net:362:12)
+  }
+}
+[2026-09-10T09:03:34.252Z] [INFO] [AutoDrain] ✓ LIKE → browser-executed
+[2026-09-10T09:06:43.589Z] [INFO] [AutoDrain] ✓ LIKE → browser-executed
+[2026-09-10T09:09:37.677Z] [ERROR] [AutoDrain] ✗ LIKE FAILED → POST_NOT_ELIGIBLE
+[2026-09-10T09:11:50.969Z] [ERROR] [AutoQueue] Cycle failed: DrizzleQueryError: Failed query: select "id", "tenant_id", "campaign_enrollment_id", "prospect_id", "account_id", "action_type", "payload", "scheduled_for", "status", "idempotency_key", "revision_id", "post_hash", "mode", "outcome_label", "error_code", "claim_token", "claimed_by", "claimed_at", "completed_at", "created_at", "updated_at" from "scheduled_actions" "scheduledActions" where "scheduledActions"."status" = $1
+params: PENDING
+    at NodePgPreparedQuery.queryWithCache (/Users/tusharmangla/Dev/outreach/linkedin-outreach/node_modules/src/pg-core/session.ts:73:11)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async <anonymous> (/Users/tusharmangla/Dev/outreach/linkedin-outreach/node_modules/src/node-postgres/session.ts:154:19)
+    at async Timeout.autoApproveAndQueueCycle (/Users/tusharmangla/Dev/outreach/linkedin-outreach/src/server.ts:1103:32) {
+  query: 'select "id", "tenant_id", "campaign_enrollment_id", "prospect_id", "account_id", "action_type", "payload", "scheduled_for", "status", "idempotency_key", "revision_id", "post_hash", "mode", "outcome_label", "error_code", "claim_token", "claimed_by", "claimed_at", "completed_at", "created_at", "updated_at" from "scheduled_actions" "scheduledActions" where "scheduledActions"."status" = $1',
+  params: [ 'PENDING' ],
+  cause: Error: Connection terminated due to connection timeout
+      at /Users/tusharmangla/Dev/outreach/linkedin-outreach/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async <anonymous> (/Users/tusharmangla/Dev/outreach/linkedin-outreach/node_modules/src/node-postgres/session.ts:161:13)
+      at async NodePgPreparedQuery.queryWithCache (/Users/tusharmangla/Dev/outreach/linkedin-outreach/node_modules/src/pg-core/session.ts:71:12)
+      at async <anonymous> (/Users/tusharmangla/Dev/outreach/linkedin-outreach/node_modules/src/node-postgres/session.ts:154:19)
+      at async Timeout.autoApproveAndQueueCycle (/Users/tusharmangla/Dev/outreach/linkedin-outreach/src/server.ts:1103:32) {
+    [cause]: Error: Connection terminated unexpectedly
+        at Connection.<anonymous> (/Users/tusharmangla/Dev/outreach/linkedin-outreach/node_modules/pg/lib/client.js:204:73)
+        at Connection.wrapper (node:events:639:12)
+        at Connection.emit (node:events:514:20)
+        at Socket.<anonymous> (/Users/tusharmangla/Dev/outreach/linkedin-outreach/node_modules/pg/lib/connection.js:64:12)
+        at Socket.emit (node:events:526:24)
+        at TCP.<anonymous> (node:net:362:12)
+  }
+}
+[2026-09-10T09:12:34.237Z] [INFO] [AutoDrain] ✓ LIKE → browser-executed
+[2026-09-10T09:19:50.894Z] [ERROR] [AutoQueue] Cycle failed: DrizzleQueryError: Failed query: select "id", "tenant_id", "campaign_enrollment_id", "prospect_id", "account_id", "action_type", "payload", "scheduled_for", "status", "idempotency_key", "revision_id", "post_hash", "mode", "outcome_label", "error_code", "claim_token", "claimed_by", "claimed_at", "completed_at", "created_at", "updated_at" from "scheduled_actions" "scheduledActions" where "scheduledActions"."status" = $1
+params: PENDING
+    at NodePgPreparedQuery.queryWithCache (/Users/tusharmangla/Dev/outreach/linkedin-outreach/node_modules/src/pg-core/session.ts:73:11)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async <anonymous> (/Users/tusharmangla/Dev/outreach/linkedin-outreach/node_modules/src/node-postgres/session.ts:154:19)
+    at async Timeout.autoApproveAndQueueCycle (/Users/tusharmangla/Dev/outreach/linkedin-outreach/src/server.ts:1103:32) {
+  query: 'select "id", "tenant_id", "campaign_enrollment_id", "prospect_id", "account_id", "action_type", "payload", "scheduled_for", "status", "idempotency_key", "revision_id", "post_hash", "mode", "outcome_label", "error_code", "claim_token", "claimed_by", "claimed_at", "completed_at", "created_at", "updated_at" from "scheduled_actions" "scheduledActions" where "scheduledActions"."status" = $1',
+  params: [ 'PENDING' ],
+  cause: Error: Connection terminated due to connection timeout
+      at /Users/tusharmangla/Dev/outreach/linkedin-outreach/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async <anonymous> (/Users/tusharmangla/Dev/outreach/linkedin-outreach/node_modules/src/node-postgres/session.ts:161:13)
+      at async NodePgPreparedQuery.queryWithCache (/Users/tusharmangla/Dev/outreach/linkedin-outreach/node_modules/src/pg-core/session.ts:71:12)
+      at async <anonymous> (/Users/tusharmangla/Dev/outreach/linkedin-outreach/node_modules/src/node-postgres/session.ts:154:19)
+      at async Timeout.autoApproveAndQueueCycle (/Users/tusharmangla/Dev/outreach/linkedin-outreach/src/server.ts:1103:32) {
+    [cause]: Error: Connection terminated unexpectedly
+        at Connection.<anonymous> (/Users/tusharmangla/Dev/outreach/linkedin-outreach/node_modules/pg/lib/client.js:204:73)
+        at Connection.wrapper (node:events:639:12)
+        at Connection.emit (node:events:514:20)
+        at Socket.<anonymous> (/Users/tusharmangla/Dev/outreach/linkedin-outreach/node_modules/pg/lib/connection.js:64:12)
+        at Socket.emit (node:events:526:24)
+        at TCP.<anonymous> (node:net:362:12)
+  }
+}
+[2026-09-10T09:27:20.754Z] [ERROR] [AutoDrain] Error: Failed query: select "id", "tenant_id", "campaign_enrollment_id", "prospect_id", "account_id", "action_type", "payload", "scheduled_for", "status", "idempotency_key", "revision_id", "post_hash", "mode", "outcome_label", "error_code", "claim_token", "claimed_by", "claimed_at", "completed_at", "created_at", "updated_at" from "scheduled_actions" "scheduledActions" where "scheduledActions"."status" = $1 order by "scheduledActions"."scheduled_for" asc, "scheduledActions"."created_at" asc limit $2
+params: PENDING,1
+[2026-09-10T09:29:50.916Z] [ERROR] [AutoQueue] Cycle failed: DrizzleQueryError: Failed query: select "id", "tenant_id", "campaign_enrollment_id", "prospect_id", "account_id", "action_type", "payload", "scheduled_for", "status", "idempotency_key", "revision_id", "post_hash", "mode", "outcome_label", "error_code", "claim_token", "claimed_by", "claimed_at", "completed_at", "created_at", "updated_at" from "scheduled_actions" "scheduledActions" where "scheduledActions"."status" = $1
+params: PENDING
+    at NodePgPreparedQuery.queryWithCache (/Users/tusharmangla/Dev/outreach/linkedin-outreach/node_modules/src/pg-core/session.ts:73:11)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async <anonymous> (/Users/tusharmangla/Dev/outreach/linkedin-outreach/node_modules/src/node-postgres/session.ts:154:19)
+    at async Timeout.autoApproveAndQueueCycle (/Users/tusharmangla/Dev/outreach/linkedin-outreach/src/server.ts:1103:32) {
+  query: 'select "id", "tenant_id", "campaign_enrollment_id", "prospect_id", "account_id", "action_type", "payload", "scheduled_for", "status", "idempotency_key", "revision_id", "post_hash", "mode", "outcome_label", "error_code", "claim_token", "claimed_by", "claimed_at", "completed_at", "created_at", "updated_at" from "scheduled_actions" "scheduledActions" where "scheduledActions"."status" = $1',
+  params: [ 'PENDING' ],
+  cause: Error: Connection terminated due to connection timeout
+      at /Users/tusharmangla/Dev/outreach/linkedin-outreach/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async <anonymous> (/Users/tusharmangla/Dev/outreach/linkedin-outreach/node_modules/src/node-postgres/session.ts:161:13)
+      at async NodePgPreparedQuery.queryWithCache (/Users/tusharmangla/Dev/outreach/linkedin-outreach/node_modules/src/pg-core/session.ts:71:12)
+      at async <anonymous> (/Users/tusharmangla/Dev/outreach/linkedin-outreach/node_modules/src/node-postgres/session.ts:154:19)
+      at async Timeout.autoApproveAndQueueCycle (/Users/tusharmangla/Dev/outreach/linkedin-outreach/src/server.ts:1103:32) {
+    [cause]: Error: Connection terminated unexpectedly
+        at Connection.<anonymous> (/Users/tusharmangla/Dev/outreach/linkedin-outreach/node_modules/pg/lib/client.js:204:73)
+        at Connection.wrapper (node:events:639:12)
+        at Connection.emit (node:events:514:20)
+        at Socket.<anonymous> (/Users/tusharmangla/Dev/outreach/linkedin-outreach/node_modules/pg/lib/connection.js:64:12)
+        at Socket.emit (node:events:526:24)
+        at TCP.<anonymous> (node:net:362:12)
+  }
+}
+[2026-09-10T09:34:50.887Z] [ERROR] [AutoQueue] Cycle failed: DrizzleQueryError: Failed query: select "id", "tenant_id", "campaign_enrollment_id", "prospect_id", "account_id", "action_type", "payload", "scheduled_for", "status", "idempotency_key", "revision_id", "post_hash", "mode", "outcome_label", "error_code", "claim_token", "claimed_by", "claimed_at", "completed_at", "created_at", "updated_at" from "scheduled_actions" "scheduledActions" where "scheduledActions"."status" = $1
+params: PENDING
+    at NodePgPreparedQuery.queryWithCache (/Users/tusharmangla/Dev/outreach/linkedin-outreach/node_modules/src/pg-core/session.ts:73:11)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async <anonymous> (/Users/tusharmangla/Dev/outreach/linkedin-outreach/node_modules/src/node-postgres/session.ts:154:19)
+    at async Timeout.autoApproveAndQueueCycle (/Users/tusharmangla/Dev/outreach/linkedin-outreach/src/server.ts:1103:32) {
+  query: 'select "id", "tenant_id", "campaign_enrollment_id", "prospect_id", "account_id", "action_type", "payload", "scheduled_for", "status", "idempotency_key", "revision_id", "post_hash", "mode", "outcome_label", "error_code", "claim_token", "claimed_by", "claimed_at", "completed_at", "created_at", "updated_at" from "scheduled_actions" "scheduledActions" where "scheduledActions"."status" = $1',
+  params: [ 'PENDING' ],
+  cause: Error: Connection terminated due to connection timeout
+      at /Users/tusharmangla/Dev/outreach/linkedin-outreach/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async <anonymous> (/Users/tusharmangla/Dev/outreach/linkedin-outreach/node_modules/src/node-postgres/session.ts:161:13)
+      at async NodePgPreparedQuery.queryWithCache (/Users/tusharmangla/Dev/outreach/linkedin-outreach/node_modules/src/pg-core/session.ts:71:12)
+      at async <anonymous> (/Users/tusharmangla/Dev/outreach/linkedin-outreach/node_modules/src/node-postgres/session.ts:154:19)
+      at async Timeout.autoApproveAndQueueCycle (/Users/tusharmangla/Dev/outreach/linkedin-outreach/src/server.ts:1103:32) {
+    [cause]: Error: Connection terminated unexpectedly
+        at Connection.<anonymous> (/Users/tusharmangla/Dev/outreach/linkedin-outreach/node_modules/pg/lib/client.js:204:73)
+        at Connection.wrapper (node:events:639:12)
+        at Connection.emit (node:events:514:20)
+        at Socket.<anonymous> (/Users/tusharmangla/Dev/outreach/linkedin-outreach/node_modules/pg/lib/connection.js:64:12)
+        at Socket.emit (node:events:526:24)
+        at TCP.<anonymous> (node:net:362:12)
+  }
+}
+[2026-09-10T09:35:20.888Z] [ERROR] [AutoQueue] Cycle failed: DrizzleQueryError: Failed query: select "id", "tenant_id", "campaign_enrollment_id", "prospect_id", "account_id", "action_type", "payload", "scheduled_for", "status", "idempotency_key", "revision_id", "post_hash", "mode", "outcome_label", "error_code", "claim_token", "claimed_by", "claimed_at", "completed_at", "created_at", "updated_at" from "scheduled_actions" "scheduledActions" where "scheduledActions"."status" = $1
+params: PENDING
+    at NodePgPreparedQuery.queryWithCache (/Users/tusharmangla/Dev/outreach/linkedin-outreach/node_modules/src/pg-core/session.ts:73:11)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async <anonymous> (/Users/tusharmangla/Dev/outreach/linkedin-outreach/node_modules/src/node-postgres/session.ts:154:19)
+    at async Timeout.autoApproveAndQueueCycle (/Users/tusharmangla/Dev/outreach/linkedin-outreach/src/server.ts:1103:32) {
+  query: 'select "id", "tenant_id", "campaign_enrollment_id", "prospect_id", "account_id", "action_type", "payload", "scheduled_for", "status", "idempotency_key", "revision_id", "post_hash", "mode", "outcome_label", "error_code", "claim_token", "claimed_by", "claimed_at", "completed_at", "created_at", "updated_at" from "scheduled_actions" "scheduledActions" where "scheduledActions"."status" = $1',
+  params: [ 'PENDING' ],
+  cause: Error: Connection terminated due to connection timeout
+      at /Users/tusharmangla/Dev/outreach/linkedin-outreach/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async <anonymous> (/Users/tusharmangla/Dev/outreach/linkedin-outreach/node_modules/src/node-postgres/session.ts:161:13)
+      at async NodePgPreparedQuery.queryWithCache (/Users/tusharmangla/Dev/outreach/linkedin-outreach/node_modules/src/pg-core/session.ts:71:12)
+      at async <anonymous> (/Users/tusharmangla/Dev/outreach/linkedin-outreach/node_modules/src/node-postgres/session.ts:154:19)
+      at async Timeout.autoApproveAndQueueCycle (/Users/tusharmangla/Dev/outreach/linkedin-outreach/src/server.ts:1103:32) {
+    [cause]: Error: Connection terminated unexpectedly
+        at Connection.<anonymous> (/Users/tusharmangla/Dev/outreach/linkedin-outreach/node_modules/pg/lib/client.js:204:73)
+        at Connection.wrapper (node:events:639:12)
+        at Connection.emit (node:events:514:20)
+        at Socket.<anonymous> (/Users/tusharmangla/Dev/outreach/linkedin-outreach/node_modules/pg/lib/connection.js:64:12)
+        at Socket.emit (node:events:526:24)
+        at TCP.<anonymous> (node:net:362:12)
+  }
+}
+[2026-09-10T09:42:50.898Z] [ERROR] [AutoQueue] Cycle failed: DrizzleQueryError: Failed query: select "id", "tenant_id", "campaign_enrollment_id", "prospect_id", "account_id", "action_type", "payload", "scheduled_for", "status", "idempotency_key", "revision_id", "post_hash", "mode", "outcome_label", "error_code", "claim_token", "claimed_by", "claimed_at", "completed_at", "created_at", "updated_at" from "scheduled_actions" "scheduledActions" where "scheduledActions"."status" = $1
+params: PENDING
+    at NodePgPreparedQuery.queryWithCache (/Users/tusharmangla/Dev/outreach/linkedin-outreach/node_modules/src/pg-core/session.ts:73:11)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async <anonymous> (/Users/tusharmangla/Dev/outreach/linkedin-outreach/node_modules/src/node-postgres/session.ts:154:19)
+    at async Timeout.autoApproveAndQueueCycle (/Users/tusharmangla/Dev/outreach/linkedin-outreach/src/server.ts:1103:32) {
+  query: 'select "id", "tenant_id", "campaign_enrollment_id", "prospect_id", "account_id", "action_type", "payload", "scheduled_for", "status", "idempotency_key", "revision_id", "post_hash", "mode", "outcome_label", "error_code", "claim_token", "claimed_by", "claimed_at", "completed_at", "created_at", "updated_at" from "scheduled_actions" "scheduledActions" where "scheduledActions"."status" = $1',
+  params: [ 'PENDING' ],
+  cause: Error: Connection terminated due to connection timeout
+      at /Users/tusharmangla/Dev/outreach/linkedin-outreach/node_modules/pg-pool/index.js:45:11
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async <anonymous> (/Users/tusharmangla/Dev/outreach/linkedin-outreach/node_modules/src/node-postgres/session.ts:161:13)
+      at async NodePgPreparedQuery.queryWithCache (/Users/tusharmangla/Dev/outreach/linkedin-outreach/node_modules/src/pg-core/session.ts:71:12)
+      at async <anonymous> (/Users/tusharmangla/Dev/outreach/linkedin-outreach/node_modules/src/node-postgres/session.ts:154:19)
+      at async Timeout.autoApproveAndQueueCycle (/Users/tusharmangla/Dev/outreach/linkedin-outreach/src/server.ts:1103:32) {
+    [cause]: Error: Connection terminated unexpectedly
+        at Connection.<anonymous> (/Users/tusharmangla/Dev/outreach/linkedin-outreach/node_modules/pg/lib/client.js:204:73)
+        at Connection.wrapper (node:events:639:12)
+        at Connection.emit (node:events:514:20)
+        at Socket.<anonymous> (/Users/tusharmangla/Dev/outreach/linkedin-outreach/node_modules/pg/lib/connection.js:64:12)
+        at Socket.emit (node:events:526:24)
+        at TCP.<anonymous> (node:net:362:12)
+  }
+}
+[2026-09-10T10:03:04.373Z] [INFO] ◇ injected env (0) from .env [2m// tip: ⌘ multiple files { path: ['.env.local', '.env'] }[0m
+[2026-09-10T10:03:04.378Z] [INFO] [AutoDrain] Server-side queue drain worker started (gap: 180s)
+[2026-09-10T10:03:04.378Z] [INFO] [AutoQueue] Auto-approve and queue worker started (every 30s)
+[2026-09-10T10:03:04.380Z] [INFO] RecruitmentOS ICP server listening on http://localhost:3000
+[2026-09-10T10:44:45.381Z] [INFO] ◇ injected env (0) from .env [2m// tip: ⌘ enable debugging { debug: true }[0m
+[2026-09-10T10:44:45.385Z] [INFO] [AutoDrain] Server-side queue drain worker started (gap: 180s)
+[2026-09-10T10:44:45.386Z] [INFO] [AutoQueue] Auto-approve and queue worker started (every 30s)
+[2026-09-10T10:44:45.386Z] [INFO] RecruitmentOS ICP server listening on http://localhost:3000
+[2026-09-10T10:45:29.531Z] [INFO] ◇ injected env (0) from .env [2m// tip: ◈ secrets for agents [www.dotenvx.com][0m
+[2026-09-10T10:45:29.535Z] [INFO] [AutoDrain] Server-side queue drain worker started (gap: 180s)
+[2026-09-10T10:45:29.535Z] [INFO] [AutoQueue] Auto-approve and queue worker started (every 30s)
+[2026-09-10T10:45:29.536Z] [INFO] RecruitmentOS ICP server listening on http://localhost:3000
+[2026-09-10T10:46:25.750Z] [INFO] ◇ injected env (0) from .env [2m// tip: ⌁ auth for agents [www.vestauth.com][0m
+[2026-09-10T10:46:25.754Z] [INFO] [AutoDrain] Server-side queue drain worker started (gap: 180s)
+[2026-09-10T10:46:25.754Z] [INFO] [AutoQueue] Auto-approve and queue worker started (every 30s)
+[2026-09-10T10:46:25.755Z] [INFO] RecruitmentOS ICP server listening on http://localhost:3000
+[2026-09-10T10:46:36.702Z] [INFO] ◇ injected env (0) from .env [2m// tip: ◈ encrypted .env [www.dotenvx.com][0m
+[2026-09-10T10:46:36.706Z] [INFO] [AutoDrain] Server-side queue drain worker started (gap: 180s)
+[2026-09-10T10:46:36.706Z] [INFO] [AutoQueue] Auto-approve and queue worker started (every 30s)
+[2026-09-10T10:46:36.707Z] [INFO] RecruitmentOS ICP server listening on http://localhost:3000
+[2026-09-10T10:46:54.835Z] [INFO] ◇ injected env (0) from .env [2m// tip: ⌘ suppress logs { quiet: true }[0m
+[2026-09-10T10:46:54.840Z] [INFO] [AutoDrain] Server-side queue drain worker started (gap: 180s)
+[2026-09-10T10:46:54.840Z] [INFO] [AutoQueue] Auto-approve and queue worker started (every 30s)
+[2026-09-10T10:46:54.842Z] [INFO] RecruitmentOS ICP server listening on http://localhost:3000
+[2026-09-10T10:47:07.722Z] [INFO] ◇ injected env (0) from .env [2m// tip: ⌁ auth for agents [www.vestauth.com][0m
+[2026-09-10T10:47:07.726Z] [INFO] [AutoDrain] Server-side queue drain worker started (gap: 180s)
+[2026-09-10T10:47:07.726Z] [INFO] [AutoQueue] Auto-approve and queue worker started (every 30s)
+[2026-09-10T10:47:07.727Z] [INFO] RecruitmentOS ICP server listening on http://localhost:3000
+[2026-09-10T10:47:30.366Z] [INFO] ◇ injected env (0) from .env [2m// tip: ◈ secrets for agents [www.dotenvx.com][0m
+[2026-09-10T10:47:30.371Z] [INFO] [AutoDrain] Server-side queue drain worker started (gap: 180s)
+[2026-09-10T10:47:30.371Z] [INFO] [AutoQueue] Auto-approve and queue worker started (every 30s)
+[2026-09-10T10:47:30.372Z] [INFO] RecruitmentOS ICP server listening on http://localhost:3000
+[2026-09-10T10:47:46.015Z] [INFO] ◇ injected env (0) from .env [2m// tip: ⌘ multiple files { path: ['.env.local', '.env'] }[0m
+[2026-09-10T10:47:46.019Z] [INFO] [AutoDrain] Server-side queue drain worker started (gap: 180s)
+[2026-09-10T10:47:46.019Z] [INFO] [AutoQueue] Auto-approve and queue worker started (every 30s)
+[2026-09-10T10:47:46.020Z] [INFO] RecruitmentOS ICP server listening on http://localhost:3000
+[2026-09-10T10:47:56.049Z] [INFO] ◇ injected env (0) from .env [2m// tip: ⌘ suppress logs { quiet: true }[0m
+[2026-09-10T10:47:56.053Z] [INFO] [AutoDrain] Server-side queue drain worker started (gap: 180s)
+[2026-09-10T10:47:56.053Z] [INFO] [AutoQueue] Auto-approve and queue worker started (every 30s)
+[2026-09-10T10:47:56.054Z] [INFO] RecruitmentOS ICP server listening on http://localhost:3000
+[2026-09-10T10:48:05.967Z] [INFO] ◇ injected env (0) from .env [2m// tip: ⌘ enable debugging { debug: true }[0m
+[2026-09-10T10:48:05.974Z] [INFO] [AutoDrain] Server-side queue drain worker started (gap: 180s)
+[2026-09-10T10:48:05.974Z] [INFO] [AutoQueue] Auto-approve and queue worker started (every 30s)
+[2026-09-10T10:48:05.975Z] [INFO] RecruitmentOS ICP server listening on http://localhost:3000
+[2026-09-10T10:49:40.338Z] [INFO] ◇ injected env (0) from .env [2m// tip: ⌘ suppress logs { quiet: true }[0m
+[2026-09-10T10:49:40.342Z] [INFO] [AutoDrain] Server-side queue drain worker started (gap: 180s)
+[2026-09-10T10:49:40.342Z] [INFO] [AutoQueue] Auto-approve and queue worker started (every 30s)
+[2026-09-10T10:49:40.343Z] [INFO] RecruitmentOS ICP server listening on http://localhost:3000
+[2026-09-10T10:50:15.991Z] [INFO] ◇ injected env (0) from .env [2m// tip: ◈ secrets for agents [www.dotenvx.com][0m
+[2026-09-10T10:50:15.995Z] [INFO] [AutoDrain] Server-side queue drain worker started (gap: 180s)
+[2026-09-10T10:50:15.995Z] [INFO] [AutoQueue] Auto-approve and queue worker started (every 30s)
+[2026-09-10T10:50:15.996Z] [INFO] RecruitmentOS ICP server listening on http://localhost:3000
+[2026-09-10T10:51:17.782Z] [INFO] ◇ injected env (0) from .env [2m// tip: ⌘ enable debugging { debug: true }[0m
+[2026-09-10T10:51:17.786Z] [INFO] [AutoDrain] Server-side queue drain worker started (gap: 180s)
+[2026-09-10T10:51:17.787Z] [INFO] [AutoQueue] Auto-approve and queue worker started (every 30s)
+[2026-09-10T10:51:17.787Z] [INFO] RecruitmentOS ICP server listening on http://localhost:3000
+[2026-09-10T10:51:58.096Z] [INFO] ◇ injected env (0) from .env [2m// tip: ◈ encrypted .env [www.dotenvx.com][0m
+[2026-09-10T10:51:58.101Z] [INFO] [AutoDrain] Server-side queue drain worker started (gap: 180s)
+[2026-09-10T10:51:58.101Z] [INFO] [AutoQueue] Auto-approve and queue worker started (every 30s)
+[2026-09-10T10:51:58.102Z] [INFO] RecruitmentOS ICP server listening on http://localhost:3000
+[2026-09-10T10:52:10.779Z] [INFO] ◇ injected env (0) from .env [2m// tip: ⌘ override existing { override: true }[0m
+[2026-09-10T10:52:10.784Z] [INFO] [AutoDrain] Server-side queue drain worker started (gap: 180s)
+[2026-09-10T10:52:10.784Z] [INFO] [AutoQueue] Auto-approve and queue worker started (every 30s)
+[2026-09-10T10:52:10.785Z] [INFO] RecruitmentOS ICP server listening on http://localhost:3000
+[2026-09-10T10:53:08.724Z] [INFO] ◇ injected env (0) from .env [2m// tip: ⌘ enable debugging { debug: true }[0m
+[2026-09-10T10:53:08.728Z] [INFO] [AutoDrain] Server-side queue drain worker started (gap: 180s)
+[2026-09-10T10:53:08.728Z] [INFO] [AutoQueue] Auto-approve and queue worker started (every 30s)
+[2026-09-10T10:53:08.729Z] [INFO] RecruitmentOS ICP server listening on http://localhost:3000
+[2026-09-10T10:53:16.797Z] [INFO] ◇ injected env (0) from .env [2m// tip: ⌘ custom filepath { path: '/custom/path/.env' }[0m
+[2026-09-10T10:53:16.801Z] [INFO] [AutoDrain] Server-side queue drain worker started (gap: 180s)
+[2026-09-10T10:53:16.801Z] [INFO] [AutoQueue] Auto-approve and queue worker started (every 30s)
+[2026-09-10T10:53:16.802Z] [INFO] RecruitmentOS ICP server listening on http://localhost:3000
+[2026-09-10T10:53:25.532Z] [INFO] ◇ injected env (0) from .env [2m// tip: ⌘ multiple files { path: ['.env.local', '.env'] }[0m
+[2026-09-10T10:53:25.536Z] [INFO] [AutoDrain] Server-side queue drain worker started (gap: 180s)
+[2026-09-10T10:53:25.536Z] [INFO] [AutoQueue] Auto-approve and queue worker started (every 30s)
+[2026-09-10T10:53:25.537Z] [INFO] RecruitmentOS ICP server listening on http://localhost:3000
+[2026-09-10T10:53:34.904Z] [INFO] ◇ injected env (0) from .env [2m// tip: ◈ encrypted .env [www.dotenvx.com][0m
+[2026-09-10T10:53:34.908Z] [INFO] [AutoDrain] Server-side queue drain worker started (gap: 180s)
+[2026-09-10T10:53:34.908Z] [INFO] [AutoQueue] Auto-approve and queue worker started (every 30s)
+[2026-09-10T10:53:34.909Z] [INFO] RecruitmentOS ICP server listening on http://localhost:3000
+[2026-09-10T10:54:01.694Z] [INFO] ◇ injected env (0) from .env [2m// tip: ⌘ suppress logs { quiet: true }[0m
+[2026-09-10T10:54:01.699Z] [INFO] [AutoDrain] Server-side queue drain worker started (gap: 180s)
+[2026-09-10T10:54:01.699Z] [INFO] [AutoQueue] Auto-approve and queue worker started (every 30s)
+[2026-09-10T10:54:01.699Z] [INFO] [ScanResume] Campaign scan resume worker started (every 10m)
+[2026-09-10T10:54:01.700Z] [INFO] RecruitmentOS ICP server listening on http://localhost:3000
+[2026-09-10T10:54:34.829Z] [INFO] [AutoQueue] Processing 0 pending and 98 approved drafts...
+[2026-09-10T10:54:40.834Z] [INFO] [AutoQueue] Automatically queued COMMENT for draft a4e61287-54e4-46df-9afe-fab6641d297b
+[2026-09-10T10:54:46.652Z] [INFO] [AutoQueue] Automatically queued COMMENT for draft 9bf03ea3-158a-4c51-9c87-38cbd86e0a92
+[2026-09-10T10:54:52.303Z] [INFO] [AutoQueue] Automatically queued COMMENT for draft df7062b7-3d53-4bee-87ff-d02e970b7a0a
+[2026-09-10T10:54:57.890Z] [INFO] [AutoQueue] Automatically queued LIKE for draft a9f7aa70-83a6-40fc-b9ab-d25eaac98203
+[2026-09-10T10:55:03.151Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 3f7932e7-45b8-4c16-a514-1092b0c0fbba
+[2026-09-10T10:55:09.028Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 70981583-dca1-473e-a365-643fb8078aa8
+[2026-09-10T10:55:14.764Z] [INFO] [AutoQueue] Automatically queued COMMENT for draft edd4bac3-c42d-4a4e-b6d0-6769dadc68f3
+[2026-09-10T10:55:27.223Z] [INFO] [AutoQueue] Automatically queued LIKE for draft afc024f6-6375-43d9-8196-9491fc298c1a
+[2026-09-10T10:55:32.881Z] [INFO] [AutoQueue] Automatically queued COMMENT for draft acd83be7-2d99-44ea-b235-332b4322c774
+[2026-09-10T10:55:38.491Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 848cf88e-559c-4089-9319-bf84eb929336
+[2026-09-10T10:55:44.019Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 14bb9fc9-242f-4da8-900d-5e9acae62793
+[2026-09-10T10:55:49.310Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 26fdd646-77be-443a-8d68-ccd53e914407
+[2026-09-10T10:55:54.826Z] [INFO] [AutoQueue] Automatically queued COMMENT for draft 37180f2e-7780-4ecc-97c7-8be853a4b8c5
+[2026-09-10T10:56:00.631Z] [INFO] [AutoQueue] Automatically queued COMMENT for draft 08100a20-e2cd-4a13-aa46-914874aa41bf
+[2026-09-10T10:56:06.457Z] [INFO] [AutoQueue] Automatically queued LIKE for draft ca96a7ad-57f8-42ce-bc33-37a064711230
+[2026-09-10T10:56:13.071Z] [INFO] [AutoQueue] Automatically queued COMMENT for draft 95ee3c1f-a73b-4e91-8b36-5b459a7f9b62
+[2026-09-10T10:56:16.828Z] [INFO] ◇ injected env (0) from .env [2m// tip: ◈ secrets for agents [www.dotenvx.com][0m
+[2026-09-10T10:56:16.833Z] [INFO] [AutoDrain] Server-side queue drain worker started (gap: 180s)
+[2026-09-10T10:56:16.833Z] [INFO] [AutoQueue] Auto-approve and queue worker started (every 30s)
+[2026-09-10T10:56:16.833Z] [INFO] [ScanResume] Campaign scan resume worker started (every 10m)
+[2026-09-10T10:56:16.834Z] [INFO] RecruitmentOS ICP server listening on http://localhost:3000
+[2026-09-10T10:59:34.220Z] [INFO] [AutoDrain] ✓ LIKE → browser-executed
+[2026-09-10T11:02:20.090Z] [INFO] [AutoQueue] Processing 0 pending and 98 approved drafts...
+[2026-09-10T11:02:25.507Z] [INFO] [AutoQueue] Automatically queued COMMENT for draft a4e61287-54e4-46df-9afe-fab6641d297b
+[2026-09-10T11:02:31.053Z] [INFO] [AutoQueue] Automatically queued COMMENT for draft 9bf03ea3-158a-4c51-9c87-38cbd86e0a92
+[2026-09-10T11:02:32.312Z] [ERROR] [AutoDrain] ✗ COMMENT FAILED → SELECTOR_MISMATCH
+[2026-09-10T11:02:36.645Z] [INFO] [AutoQueue] Automatically queued COMMENT for draft df7062b7-3d53-4bee-87ff-d02e970b7a0a
+[2026-09-10T11:02:41.952Z] [INFO] [AutoQueue] Automatically queued LIKE for draft a9f7aa70-83a6-40fc-b9ab-d25eaac98203
+[2026-09-10T11:02:47.377Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 3f7932e7-45b8-4c16-a514-1092b0c0fbba
+[2026-09-10T11:02:52.804Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 70981583-dca1-473e-a365-643fb8078aa8
+[2026-09-10T11:02:58.363Z] [INFO] [AutoQueue] Automatically queued COMMENT for draft edd4bac3-c42d-4a4e-b6d0-6769dadc68f3
+[2026-09-10T11:03:10.732Z] [INFO] [AutoQueue] Automatically queued LIKE for draft afc024f6-6375-43d9-8196-9491fc298c1a
+[2026-09-10T11:03:16.414Z] [INFO] [AutoQueue] Automatically queued COMMENT for draft acd83be7-2d99-44ea-b235-332b4322c774
+[2026-09-10T11:03:21.645Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 848cf88e-559c-4089-9319-bf84eb929336
+[2026-09-10T11:03:26.869Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 14bb9fc9-242f-4da8-900d-5e9acae62793
+[2026-09-10T11:03:32.331Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 26fdd646-77be-443a-8d68-ccd53e914407
+[2026-09-10T11:03:38.066Z] [INFO] [AutoQueue] Automatically queued COMMENT for draft 37180f2e-7780-4ecc-97c7-8be853a4b8c5
+[2026-09-10T11:03:43.682Z] [INFO] [AutoQueue] Automatically queued COMMENT for draft 08100a20-e2cd-4a13-aa46-914874aa41bf
+[2026-09-10T11:03:48.951Z] [INFO] [AutoQueue] Automatically queued LIKE for draft ca96a7ad-57f8-42ce-bc33-37a064711230
+[2026-09-10T11:03:55.468Z] [INFO] [AutoQueue] Automatically queued COMMENT for draft 95ee3c1f-a73b-4e91-8b36-5b459a7f9b62
+[2026-09-10T11:04:00.608Z] [INFO] [AutoQueue] Automatically queued LIKE for draft d6504145-eff9-4963-bb27-d8696a738bfb
+[2026-09-10T11:04:07.558Z] [INFO] [AutoQueue] Automatically queued COMMENT for draft 32f6b37a-be9e-4c1a-b5fd-ad941ab0d679
+[2026-09-10T11:04:13.154Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 975df8bb-ad0e-49fd-aaad-97b05dc53e3e
+[2026-09-10T11:04:18.836Z] [INFO] [AutoQueue] Automatically queued COMMENT for draft 9023afa9-f3e7-4c72-8723-88e8207da985
+[2026-09-10T11:04:24.236Z] [INFO] [AutoQueue] Automatically queued LIKE for draft a5f923e8-8d68-4e1b-9706-d95230cb37c7
+[2026-09-10T11:04:31.314Z] [INFO] [AutoQueue] Automatically queued COMMENT for draft c91073fc-dd3f-4892-8354-4be4e12e96b1
+[2026-09-10T11:04:36.563Z] [INFO] [AutoQueue] Automatically queued LIKE for draft b2fa6d8d-e1dc-4caa-9943-21be61782ad0
+[2026-09-10T11:04:43.705Z] [INFO] [AutoQueue] Automatically queued COMMENT for draft 3e8e88ae-985e-474e-82ad-07ca3b327ace
+[2026-09-10T11:04:49.125Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 4dc766a9-3561-431a-9c7d-04b6af08a6b4
+[2026-09-10T11:04:55.527Z] [INFO] [AutoQueue] Automatically queued COMMENT for draft e185dd05-cfa6-4634-a3b7-d4c7d2fffb78
+[2026-09-10T11:05:00.756Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 5eb17d83-ad3a-4256-a90d-23474fa42a05
+[2026-09-10T11:05:07.257Z] [INFO] [AutoQueue] Automatically queued COMMENT for draft ffd036fc-4f3b-4279-a571-7050e28777ac
+[2026-09-10T11:05:12.648Z] [INFO] [AutoQueue] Automatically queued LIKE for draft b2e70065-505d-4366-9d28-1f9984a9d835
+[2026-09-10T11:05:17.871Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 838fddee-a837-457e-bb99-6934817a99ec
+[2026-09-10T11:05:24.929Z] [INFO] [AutoQueue] Automatically queued COMMENT for draft 5e4926b1-ae2e-4993-bef9-0be648a2d984
+[2026-09-10T11:05:30.172Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 82a8ae4e-63c9-4944-87d0-76f9eb8e3450
+[2026-09-10T11:05:36.394Z] [INFO] [AutoQueue] Automatically queued COMMENT for draft fcaa1909-781d-4a61-8148-79ebdb31e13f
+[2026-09-10T11:05:41.544Z] [INFO] [AutoQueue] Automatically queued LIKE for draft f34bf120-07e2-4823-8995-6dcae1702f7c
+[2026-09-10T11:05:47.116Z] [ERROR] [AutoDrain] ✗ COMMENT FAILED → SELECTOR_MISMATCH
+[2026-09-10T11:05:47.925Z] [INFO] [AutoQueue] Automatically queued LIKE for draft de0f4f12-5257-41ae-b89e-d0d810972d69
+[2026-09-10T11:05:53.633Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 3626a449-be00-4942-9d13-46a1c012b324
+[2026-09-10T11:05:59.399Z] [INFO] [AutoQueue] Automatically queued LIKE for draft bfceeb43-b50f-49e2-a23d-fd12985f6ac5
+[2026-09-10T11:06:05.795Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 766ba1ca-63b8-483c-abf4-6ac28d191135
+[2026-09-10T11:06:12.529Z] [INFO] [AutoQueue] Automatically queued COMMENT for draft 8f2fd15a-7f0b-4d41-b7e3-a3507ac625d1
+[2026-09-10T11:06:19.005Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 941fb745-3a6c-41ec-8ed9-f5728e8e2c71
+[2026-09-10T11:06:24.752Z] [INFO] [AutoQueue] Automatically queued LIKE for draft d4e7313b-a274-4ccc-b03c-6cce8dc13a27
+[2026-09-10T11:06:27.522Z] [INFO] [ProfileActivityPostSource] OpenCLI fetched 5 posts for https://www.linkedin.com/in/ajaykumarfounder
+[2026-09-10T11:06:30.545Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 9ffd1e6c-5eac-42f8-8aef-6ca9631e9755
+[2026-09-10T11:06:35.776Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 71bf7db3-4b3c-4019-84eb-df6ad61a4059
+[2026-09-10T11:06:41.280Z] [INFO] [AutoQueue] Automatically queued LIKE for draft e4cc971a-4b58-48f0-9774-56ac7984196c
+[2026-09-10T11:06:46.605Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 0300ddc0-7c71-4cf9-9d2e-e9c3ee885d24
+[2026-09-10T11:06:51.916Z] [INFO] [AutoQueue] Automatically queued LIKE for draft c5d60db3-ecb9-4014-8f36-08c5d1bc8f3f
+[2026-09-10T11:06:57.226Z] [INFO] [AutoQueue] Automatically queued LIKE for draft db847325-01c8-4000-ade2-d87771af43b4
+[2026-09-10T11:07:02.479Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 3793ba1c-eee3-4c7e-9b68-80d6962f033d
+[2026-09-10T11:07:07.759Z] [INFO] [AutoQueue] Automatically queued LIKE for draft ea260886-8edd-4538-82c1-a013ca3894e9
+[2026-09-10T11:07:12.938Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 824e2b0f-6f8c-435f-be68-9cf5063ca4f6
+[2026-09-10T11:07:18.158Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 591e6fe6-4911-4253-9dc0-ebd54caa0ded
+[2026-09-10T11:07:23.465Z] [INFO] [AutoQueue] Automatically queued LIKE for draft dfa7b9a1-c89f-444b-ac4b-123d4a9782cf
+[2026-09-10T11:07:28.671Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 30a6d232-ce65-4ca7-ace8-c9b3c4edf1f5
+[2026-09-10T11:07:30.891Z] [INFO] [Engagement] Comment generation failed for post f680fe32-e1bc-4fa4-99c6-45f4a8a7b7e1; LIKE draft a03b07f4-7bc2-4fb8-b87d-9ca71d5659f0 preserved as checkpoint. Catchup worker will backfill.
+[2026-09-10T11:07:34.327Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 93691675-ea07-46dd-8a4d-3c15230c2024
+[2026-09-10T11:07:39.510Z] [INFO] [AutoQueue] Automatically queued LIKE for draft faa39ff2-c007-43d8-81f7-3e35f789e457
+[2026-09-10T11:07:44.871Z] [INFO] [AutoQueue] Automatically queued LIKE for draft fe53b88a-67c7-4c16-9e17-e00206add402
+[2026-09-10T11:07:50.202Z] [INFO] [AutoQueue] Automatically queued LIKE for draft a5a4df7c-e809-4c97-9fe0-9131cfe393db
+[2026-09-10T11:07:55.550Z] [INFO] [AutoQueue] Automatically queued LIKE for draft d6fa79cb-24b6-4909-8a3d-76d01424e1a1
+[2026-09-10T11:08:00.831Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 94d78d74-7563-43a8-a4b1-e09d3784bbdb
+[2026-09-10T11:08:06.443Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 95babdf6-630b-44de-9685-5c8c8fe6db6e
+[2026-09-10T11:08:11.697Z] [INFO] [AutoQueue] Automatically queued LIKE for draft e586a5f4-e81b-451d-9a4d-e832401468b9
+[2026-09-10T11:08:16.975Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 4e643420-d75f-4e38-9f6e-12e10bd635b0
+[2026-09-10T11:08:22.191Z] [INFO] [AutoQueue] Automatically queued LIKE for draft cf6749a3-156a-47e1-a50c-15fdbe6423ae
+[2026-09-10T11:08:27.466Z] [INFO] [AutoQueue] Automatically queued LIKE for draft a156827b-e0e8-488d-bfe2-5ead92911be3
+[2026-09-10T11:08:31.530Z] [ERROR] [AutoDrain] ✗ COMMENT FAILED → SELECTOR_MISMATCH
+[2026-09-10T11:08:33.719Z] [INFO] [AutoQueue] Automatically queued COMMENT for draft d2c09f04-5817-4ca4-99f8-b587bb256891
+[2026-09-10T11:08:39.160Z] [INFO] [AutoQueue] Automatically queued COMMENT for draft 74cb6727-9d15-4ab9-9542-804632bbb12a
+[2026-09-10T11:08:40.720Z] [INFO] [Engagement] Comment generation failed for post f01f0c62-8190-431e-bc6e-f452be2385d5; LIKE draft e79cd3a4-7c75-49e6-ace1-7f6351ce29b1 preserved as checkpoint. Catchup worker will backfill.
+[2026-09-10T11:08:44.946Z] [INFO] [AutoQueue] Automatically queued LIKE for draft b76ef5cb-46b6-4f74-a269-200989f4218f
+[2026-09-10T11:08:50.679Z] [INFO] [AutoQueue] Automatically queued LIKE for draft b1d97b2e-7350-4af0-a2db-b54bd28105af
+[2026-09-10T11:08:55.849Z] [INFO] [AutoQueue] Automatically queued LIKE for draft cb60d584-7c46-4af5-967a-b1a865ee9011
+[2026-09-10T11:09:01.551Z] [INFO] [AutoQueue] Automatically queued COMMENT for draft 294a2998-0af4-4c2e-82c1-76b2a7d077bc
+[2026-09-10T11:09:07.031Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 7a393fc7-259d-4e7a-abef-d82969686409
+[2026-09-10T11:09:12.785Z] [INFO] [AutoQueue] Automatically queued COMMENT for draft d5582127-46c7-4fee-a939-f3a94b85e123
+[2026-09-10T11:09:18.127Z] [INFO] [AutoQueue] Automatically queued LIKE for draft f2e11bb6-0c71-4c3a-a54f-0ebc93a41d7c
+[2026-09-10T11:09:23.349Z] [INFO] [AutoQueue] Automatically queued LIKE for draft d83357c2-ad4e-4248-a5f9-80fd2ab4bf05
+[2026-09-10T11:09:29.114Z] [INFO] [AutoQueue] Automatically queued LIKE for draft bb218284-c03f-4019-b02d-eb121cc9f14b
+[2026-09-10T11:09:34.968Z] [INFO] [AutoQueue] Automatically queued LIKE for draft a5030c61-d5f0-43b3-ba71-e7da47413ab8
+[2026-09-10T11:09:40.795Z] [INFO] [AutoQueue] Automatically queued COMMENT for draft 8f221f96-7648-4e6e-b379-a25a35603eef
+[2026-09-10T11:09:45.979Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 21824305-5058-4c71-b456-1e5c2bbeb709
+[2026-09-10T11:09:51.126Z] [INFO] [AutoQueue] Automatically queued LIKE for draft acf45348-849a-44ad-9022-28b498b0d8a1
+[2026-09-10T11:09:56.430Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 411ee269-8436-43f6-b8b8-f823f224d4f4
+[2026-09-10T11:10:01.683Z] [INFO] [AutoQueue] Automatically queued LIKE for draft a396699b-1a4e-4dd4-8ac0-e1e7754322b1
+[2026-09-10T11:10:07.139Z] [INFO] [AutoQueue] Automatically queued COMMENT for draft 9d3cfdc7-d99e-41e3-8cee-31033c6c61e2
+[2026-09-10T11:10:12.947Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 70117946-bf58-420d-bc71-30eb3770575d
+[2026-09-10T11:10:18.776Z] [INFO] [AutoQueue] Automatically queued COMMENT for draft 6f2b57f1-a1f4-4b2d-9db1-3b7eeda6b761
+[2026-09-10T11:10:24.166Z] [INFO] [AutoQueue] Automatically queued LIKE for draft f6a62d71-de58-46e1-a94f-eb668735daa2
+[2026-09-10T11:10:29.759Z] [INFO] [AutoQueue] Automatically queued COMMENT for draft 41b0cdd4-a3cf-40f6-a627-f2a1f9c01a15
+[2026-09-10T11:10:33.382Z] [INFO] [Engagement] Comment generation failed for post af3ff0ef-7839-4b93-8949-b576f6205018; LIKE draft ee7e5e3c-59d3-4fd6-bb22-7864c8041f32 preserved as checkpoint. Catchup worker will backfill.
+[2026-09-10T11:10:35.351Z] [INFO] [AutoQueue] Automatically queued COMMENT for draft 4843cb78-0bed-4ca5-ab00-38eccb45c194
+[2026-09-10T11:10:41.465Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 07d3deed-fc81-4a23-8b18-93673e9fd9e4
+[2026-09-10T11:10:47.075Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 31843878-e86a-4411-b7ec-261e749b4307
+[2026-09-10T11:10:52.362Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 712821c1-4943-4e82-a7d6-56204458ae16
+[2026-09-10T11:10:54.591Z] [INFO] ◇ injected env (0) from .env [2m// tip: ◈ secrets for agents [www.dotenvx.com][0m
+[2026-09-10T11:10:54.595Z] [INFO] [AutoDrain] Server-side queue drain worker started (gap: 180s)
+[2026-09-10T11:10:54.595Z] [INFO] [AutoQueue] Auto-approve and queue worker started (every 30s)
+[2026-09-10T11:10:54.595Z] [INFO] [ScanResume] Campaign scan resume worker started (every 10m)
+[2026-09-10T11:10:54.596Z] [INFO] RecruitmentOS ICP server listening on http://localhost:3000
+[2026-09-10T11:11:10.042Z] [INFO] ◇ injected env (0) from .env [2m// tip: ⌘ custom filepath { path: '/custom/path/.env' }[0m
+[2026-09-10T11:11:10.046Z] [INFO] [AutoDrain] Server-side queue drain worker started (gap: 180s)
+[2026-09-10T11:11:10.046Z] [INFO] [AutoQueue] Auto-approve and queue worker started (every 30s)
+[2026-09-10T11:11:10.046Z] [INFO] [ScanResume] Campaign scan resume worker started (every 10m)
+[2026-09-10T11:11:10.047Z] [INFO] RecruitmentOS ICP server listening on http://localhost:3000
+[2026-09-10T11:11:22.466Z] [INFO] ◇ injected env (0) from .env [2m// tip: ⌁ auth for agents [www.vestauth.com][0m
+[2026-09-10T11:11:22.470Z] [INFO] [AutoDrain] Server-side queue drain worker started (gap: 180s)
+[2026-09-10T11:11:22.470Z] [INFO] [AutoQueue] Auto-approve and queue worker started (every 30s)
+[2026-09-10T11:11:22.470Z] [INFO] [ScanResume] Campaign scan resume worker started (every 10m)
+[2026-09-10T11:11:22.471Z] [INFO] RecruitmentOS ICP server listening on http://localhost:3000
+[2026-09-10T11:11:39.337Z] [INFO] ◇ injected env (0) from .env [2m// tip: ⌘ suppress logs { quiet: true }[0m
+[2026-09-10T11:11:39.342Z] [INFO] [AutoDrain] Server-side queue drain worker started (gap: 180s)
+[2026-09-10T11:11:39.342Z] [INFO] [AutoQueue] Auto-approve and queue worker started (every 30s)
+[2026-09-10T11:11:39.342Z] [INFO] [ScanResume] Campaign scan resume worker started (every 10m)
+[2026-09-10T11:11:39.343Z] [INFO] RecruitmentOS ICP server listening on http://localhost:3000
+[2026-09-10T11:11:47.584Z] [INFO] ◇ injected env (0) from .env [2m// tip: ⌘ multiple files { path: ['.env.local', '.env'] }[0m
+[2026-09-10T11:11:47.592Z] [INFO] [AutoDrain] Server-side queue drain worker started (gap: 180s)
+[2026-09-10T11:11:47.592Z] [INFO] [AutoQueue] Auto-approve and queue worker started (every 30s)
+[2026-09-10T11:11:47.592Z] [INFO] [ScanResume] Campaign scan resume worker started (every 10m)
+[2026-09-10T11:11:47.593Z] [INFO] RecruitmentOS ICP server listening on http://localhost:3000
+[2026-09-10T11:13:47.893Z] [INFO] ◇ injected env (0) from .env [2m// tip: ◈ encrypted .env [www.dotenvx.com][0m
+[2026-09-10T11:13:47.902Z] [INFO] [AutoDrain] Server-side queue drain worker started (gap: 180s)
+[2026-09-10T11:13:47.902Z] [INFO] [AutoQueue] Auto-approve and queue worker started (every 30s)
+[2026-09-10T11:13:47.902Z] [INFO] [ScanResume] Campaign scan resume worker started (every 10m)
+[2026-09-10T11:13:47.903Z] [INFO] RecruitmentOS ICP server listening on http://localhost:3000
+[2026-09-10T11:14:22.053Z] [INFO] ◇ injected env (0) from .env [2m// tip: ⌘ multiple files { path: ['.env.local', '.env'] }[0m
+[2026-09-10T11:14:22.057Z] [INFO] [AutoDrain] Server-side queue drain worker started (gap: 180s)
+[2026-09-10T11:14:22.057Z] [INFO] [AutoQueue] Auto-approve and queue worker started (every 30s)
+[2026-09-10T11:14:22.057Z] [INFO] [ScanResume] Campaign scan resume worker started (every 10m)
+[2026-09-10T11:14:22.058Z] [INFO] RecruitmentOS ICP server listening on http://localhost:3000
+[2026-09-10T11:15:18.037Z] [INFO] ◇ injected env (0) from .env [2m// tip: ⌘ override existing { override: true }[0m
+[2026-09-10T11:15:18.042Z] [INFO] [AutoDrain] Server-side queue drain worker started (gap: 180s)
+[2026-09-10T11:15:18.042Z] [INFO] [AutoQueue] Auto-approve and queue worker started (every 30s)
+[2026-09-10T11:15:18.042Z] [INFO] [ScanResume] Campaign scan resume worker started (every 10m)
+[2026-09-10T11:15:18.043Z] [INFO] RecruitmentOS ICP server listening on http://localhost:3000
+[2026-09-10T11:18:36.944Z] [ERROR] [AutoDrain] ✗ COMMENT FAILED → SELECTOR_MISMATCH
+[2026-09-10T11:21:38.820Z] [ERROR] [AutoDrain] ✗ COMMENT FAILED → SELECTOR_MISMATCH
+[2026-09-10T11:24:36.457Z] [ERROR] [AutoDrain] ✗ COMMENT FAILED → SELECTOR_MISMATCH
+[2026-09-10T11:25:30.863Z] [INFO] [ProfileActivityPostSource] OpenCLI fetched 5 posts for https://www.linkedin.com/in/marybethstankovits
+[2026-09-10T11:26:05.297Z] [INFO] [Engagement] Comment generation failed for post f680fe32-e1bc-4fa4-99c6-45f4a8a7b7e1; LIKE draft a03b07f4-7bc2-4fb8-b87d-9ca71d5659f0 preserved as checkpoint. Catchup worker will backfill.
+[2026-09-10T11:27:11.368Z] [INFO] [Engagement] Comment generation failed for post f01f0c62-8190-431e-bc6e-f452be2385d5; LIKE draft e79cd3a4-7c75-49e6-ace1-7f6351ce29b1 preserved as checkpoint. Catchup worker will backfill.
+[2026-09-10T11:27:37.325Z] [ERROR] [AutoDrain] ✗ COMMENT FAILED → SELECTOR_MISMATCH
+[2026-09-10T11:28:36.947Z] [INFO] [Engagement] Comment generation failed for post af3ff0ef-7839-4b93-8949-b576f6205018; LIKE draft ee7e5e3c-59d3-4fd6-bb22-7864c8041f32 preserved as checkpoint. Catchup worker will backfill.
+[2026-09-10T11:29:36.143Z] [INFO] [Engagement] Comment generation failed for post 92ee3950-0331-4097-b838-b598890361e4; LIKE draft de47e143-6703-461c-8412-06b2dbbb3b87 preserved as checkpoint. Catchup worker will backfill.
+[2026-09-10T11:30:34.918Z] [ERROR] [AutoDrain] ✗ COMMENT FAILED → SELECTOR_MISMATCH
+[2026-09-10T11:30:42.539Z] [INFO] [Engagement] Comment generation failed for post 3ec1a4ef-dee9-4b22-a417-cafb2ea1a2f9; LIKE draft c6e7a96f-aec0-499c-81ba-0b485531aaf7 preserved as checkpoint. Catchup worker will backfill.
+[2026-09-10T11:31:30.337Z] [INFO] [ProfileActivityPostSource] OpenCLI fetched 5 posts for https://www.linkedin.com/in/shany-medina-6b482127
+[2026-09-10T11:32:05.554Z] [INFO] [Engagement] Comment generation failed for post 5842f6a6-d743-4781-954d-64348dc0bbd8; LIKE draft d6c4ffc8-19b8-4fd4-b56c-1b5281903e69 preserved as checkpoint. Catchup worker will backfill.
+[2026-09-10T11:32:51.420Z] [INFO] [ProfileActivityPostSource] OpenCLI fetched 5 posts for https://www.linkedin.com/in/kevinpalisi
+[2026-09-10T11:33:26.697Z] [INFO] [Engagement] Comment generation failed for post b7d52a5d-1a80-4ee0-85ef-6ccb5d09c59b; LIKE draft fa5b070e-423a-45d2-9167-8948aa7a83a1 preserved as checkpoint. Catchup worker will backfill.
+[2026-09-10T11:33:39.448Z] [ERROR] [AutoDrain] ✗ COMMENT FAILED → SELECTOR_MISMATCH
+[2026-09-10T11:34:33.707Z] [INFO] [Engagement] Comment generation failed for post 4cc5d2fb-e945-4f84-93ea-f6a5db3fd2cd; LIKE draft 20d3e144-b55a-49b5-beb4-f6d4c255d301 preserved as checkpoint. Catchup worker will backfill.
+[2026-09-10T11:35:18.253Z] [INFO] [ProfileActivityPostSource] OpenCLI fetched 5 posts for https://www.linkedin.com/in/dannybygraverecruiter
+[2026-09-10T11:35:55.488Z] [INFO] [Engagement] Comment generation failed for post 918c9467-8cc6-4e6f-9aa0-2acbf1d58716; LIKE draft 321cca38-0bc6-4707-a1bd-2e8735207d9f preserved as checkpoint. Catchup worker will backfill.
+[2026-09-10T11:36:35.102Z] [ERROR] [AutoDrain] ✗ LIKE FAILED → SELECTOR_MISMATCH
+[2026-09-10T11:37:02.119Z] [INFO] [Engagement] Comment generation failed for post f3110f19-05c2-4fd6-bd24-a5e6de7a821c; LIKE draft 931ed55f-6a3c-4346-999f-e0023bbaf262 preserved as checkpoint. Catchup worker will backfill.
+[2026-09-10T11:38:44.310Z] [INFO] [Engagement] Comment generation failed for post 15aefe45-1bbf-4e09-a6e2-2d1bc0bc738c; LIKE draft 339f900c-c986-44ad-a730-a3349bf17ee8 preserved as checkpoint. Catchup worker will backfill.
+[2026-09-10T11:39:38.244Z] [ERROR] [AutoDrain] ✗ LIKE FAILED → SELECTOR_MISMATCH
+[2026-09-10T11:39:50.497Z] [INFO] [Engagement] Comment generation failed for post 645c931e-503d-47e4-9106-a660c7c75ecd; LIKE draft 7b3528ab-e000-4242-84a6-b1dad60131c3 preserved as checkpoint. Catchup worker will backfill.
+[2026-09-10T11:40:57.356Z] [INFO] [Engagement] Comment generation failed for post 68075926-e56f-4b24-bfaf-2f81a0190591; LIKE draft 5acfc141-bb61-4d8d-950a-2d32b8e1d031 preserved as checkpoint. Catchup worker will backfill.
+[2026-09-10T11:41:19.168Z] [INFO] ◇ injected env (0) from .env // tip: ◈ encrypted .env [www.dotenvx.com]
+[2026-09-10T11:41:19.177Z] [INFO] [AutoDrain] Server-side queue drain worker started (gap: 180s)
+[2026-09-10T11:41:19.177Z] [INFO] [AutoQueue] Auto-approve and queue worker started (every 30s)
+[2026-09-10T11:41:19.177Z] [INFO] [ScanResume] Campaign scan resume worker started (every 10m)
+[2026-09-10T11:41:19.178Z] [INFO] RecruitmentOS ICP server listening on http://localhost:3999
+[2026-09-10T11:42:04.826Z] [INFO] [ProfileActivityPostSource] OpenCLI fetched 5 posts for https://www.linkedin.com/in/jodyfox
+[2026-09-10T11:42:20.284Z] [INFO] [ProfileActivityPostSource] OpenCLI fetched 5 posts for https://www.linkedin.com/in/catherine-maitland-136b2bb
+[2026-09-10T11:42:32.183Z] [INFO] [ProfileActivityPostSource] OpenCLI fetched 5 posts for https://www.linkedin.com/in/bencrosby
+[2026-09-10T11:42:33.668Z] [ERROR] [AutoDrain] ✗ LIKE FAILED → SELECTOR_MISMATCH
+[2026-09-10T11:43:01.747Z] [INFO] ◇ injected env (0) from .env // tip: ⌘ override existing { override: true }
+[2026-09-10T11:43:01.751Z] [INFO] [AutoDrain] Server-side queue drain worker started (gap: 180s)
+[2026-09-10T11:43:01.751Z] [INFO] [AutoQueue] Auto-approve and queue worker started (every 30s)
+[2026-09-10T11:43:01.751Z] [INFO] [ScanResume] Campaign scan resume worker started (every 10m)
+[2026-09-10T11:43:01.752Z] [INFO] RecruitmentOS ICP server listening on http://localhost:3998
+[2026-09-10T11:43:07.953Z] [INFO] [Engagement] Comment generation failed for post f255dd22-37e9-437c-bbfa-b437c8704078; LIKE draft 121a9bca-e359-481f-95fb-1dc397db3097 preserved as checkpoint. Catchup worker will backfill.
+[2026-09-10T11:43:55.338Z] [INFO] [ProfileActivityPostSource] OpenCLI fetched 5 posts for https://www.linkedin.com/in/gary-reba-58a1681
+[2026-09-10T11:44:08.106Z] [INFO] [ProfileActivityPostSource] OpenCLI fetched 3 posts for https://www.linkedin.com/in/rudibellinazzo
+[2026-09-10T11:44:19.391Z] [INFO] [ProfileActivityPostSource] OpenCLI fetched 5 posts for https://www.linkedin.com/in/lisa-halshaw-2a773911
+[2026-09-10T11:44:54.907Z] [INFO] [Engagement] Comment generation failed for post a0ec0351-65d9-41a6-a808-eac3bf44c3cc; LIKE draft 7bee79a8-cb39-4bcb-86f0-cd6d510f08a2 preserved as checkpoint. Catchup worker will backfill.
+[2026-09-10T11:45:47.984Z] [ERROR] [AutoDrain] ✗ COMMENT FAILED → SELECTOR_MISMATCH
+[2026-09-10T11:46:42.537Z] [INFO] [ProfileActivityPostSource] OpenCLI fetched 5 posts for https://www.linkedin.com/in/stevecamplin
+[2026-09-10T11:47:17.905Z] [INFO] [Engagement] Comment generation failed for post a3214a0c-c07f-4443-ae9e-104aea19890c; LIKE draft dec17c3c-6d74-4b36-ad1d-b2d2c9046546 preserved as checkpoint. Catchup worker will backfill.
+[2026-09-10T11:48:34.361Z] [ERROR] [AutoDrain] ✗ LIKE FAILED → SELECTOR_MISMATCH
+[2026-09-10T11:49:08.308Z] [INFO] [ProfileActivityPostSource] OpenCLI fetched 5 posts for https://www.linkedin.com/in/laura-hitchens-12651020
+[2026-09-10T11:49:44.096Z] [INFO] [Engagement] Comment generation failed for post b3caeab5-7e54-4b6b-9b9b-0ad2117477a0; LIKE draft c9013dd6-6dd6-4563-a35b-b9b1d67fdb5d preserved as checkpoint. Catchup worker will backfill.
+[2026-09-10T11:51:32.572Z] [ERROR] [AutoDrain] ✗ LIKE FAILED → SELECTOR_MISMATCH
+[2026-09-10T11:51:53.783Z] [INFO] [Engagement] Comment generation failed for post da9fe1e6-3779-49ca-8edf-e2f541392654; LIKE draft 0300ddc0-7c71-4cf9-9d2e-e9c3ee885d24 preserved as checkpoint. Catchup worker will backfill.
+[2026-09-10T11:53:31.839Z] [INFO] [Engagement] Comment generation failed for post 7b2022e3-7af9-4219-b1b0-a39a2a6ba531; LIKE draft ea260886-8edd-4538-82c1-a013ca3894e9 preserved as checkpoint. Catchup worker will backfill.
+[2026-09-10T11:54:30.689Z] [INFO] [Engagement] Comment generation failed for post f3bc7436-8e63-4412-baa7-d127109a6a47; LIKE draft 591e6fe6-4911-4253-9dc0-ebd54caa0ded preserved as checkpoint. Catchup worker will backfill.
+[2026-09-10T11:54:33.918Z] [ERROR] [AutoDrain] ✗ LIKE FAILED → SELECTOR_MISMATCH
+[2026-09-10T11:56:08.771Z] [INFO] [Engagement] Comment generation failed for post 8dfd1d86-5346-4cae-a886-6c0512c5e733; LIKE draft 30a6d232-ce65-4ca7-ace8-c9b3c4edf1f5 preserved as checkpoint. Catchup worker will backfill.
+[2026-09-10T11:57:46.911Z] [INFO] [AutoDrain] ✓ COMMENT → browser-executed
+[2026-09-10T11:57:47.079Z] [INFO] [Engagement] Comment generation failed for post e83b2ed6-806e-44f8-85fa-1cdad351a6a9; LIKE draft 71bf7db3-4b3c-4019-84eb-df6ad61a4059 preserved as checkpoint. Catchup worker will backfill.
+[2026-09-10T11:57:47.185Z] [INFO] [AutoDrain] Found paired action for same prospect. Processing immediately...
+[2026-09-10T11:57:52.370Z] [INFO] [AutoDrain] ✓ COMMENT (paired) → COOLDOWN_ACTIVE
+[2026-09-10T11:59:24.773Z] [INFO] [Engagement] Comment generation failed for post 1e8400e8-7b02-49ea-a39d-48b518b90c32; LIKE draft db847325-01c8-4000-ade2-d87771af43b4 preserved as checkpoint. Catchup worker will backfill.
+[2026-09-10T12:00:33.950Z] [ERROR] [AutoDrain] ✗ LIKE FAILED → POST_NOT_ELIGIBLE
+[2026-09-10T12:01:02.807Z] [INFO] [Engagement] Comment generation failed for post 49e80bdf-edb1-4353-a37e-fd759fa0c9b6; LIKE draft faa39ff2-c007-43d8-81f7-3e35f789e457 preserved as checkpoint. Catchup worker will backfill.
+[2026-09-10T12:02:41.361Z] [INFO] [Engagement] Comment generation failed for post d9cdb142-d066-45e0-b71c-7507d5aa3f35; LIKE draft a5a4df7c-e809-4c97-9fe0-9131cfe393db preserved as checkpoint. Catchup worker will backfill.
+[2026-09-10T12:03:29.972Z] [ERROR] [AutoDrain] ✗ LIKE FAILED → POST_NOT_ELIGIBLE
+[2026-09-10T12:04:19.419Z] [INFO] [Engagement] Comment generation failed for post 3186ca92-49e5-4c3b-b25e-0eff9945b279; LIKE draft 94d78d74-7563-43a8-a4b1-e09d3784bbdb preserved as checkpoint. Catchup worker will backfill.
+[2026-09-10T12:05:39.166Z] [INFO] [ProfileActivityPostSource] OpenCLI fetched 5 posts for https://www.linkedin.com/in/jackbainger
+[2026-09-10T12:05:50.974Z] [INFO] [ProfileActivityPostSource] OpenCLI fetched 5 posts for https://www.linkedin.com/in/jazbal
+[2026-09-10T12:06:21.119Z] [INFO] [AutoQueue] Processing 30 pending and 98 approved drafts...
+[2026-09-10T12:06:25.721Z] [INFO] [Engagement] Comment generation failed for post 7b04fe22-fe9e-431e-b987-e1c443430b8c; LIKE draft f2e11bb6-0c71-4c3a-a54f-0ebc93a41d7c preserved as checkpoint. Catchup worker will backfill.
+[2026-09-10T12:06:28.254Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 44b7b5fa-48bf-45ce-b83d-0f07753867c5
+[2026-09-10T12:06:30.318Z] [ERROR] [AutoDrain] ✗ COMMENT FAILED → POST_NOT_ELIGIBLE
+[2026-09-10T12:06:35.750Z] [INFO] [AutoQueue] Automatically queued COMMENT for draft 17628681-b682-454a-87e6-19b770005e9a
+[2026-09-10T12:06:43.326Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 121a9bca-e359-481f-95fb-1dc397db3097
+[2026-09-10T12:06:50.801Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 7bee79a8-cb39-4bcb-86f0-cd6d510f08a2
+[2026-09-10T12:06:58.174Z] [INFO] [AutoQueue] Automatically queued LIKE for draft dec17c3c-6d74-4b36-ad1d-b2d2c9046546
+[2026-09-10T12:07:05.198Z] [INFO] [AutoQueue] Automatically queued LIKE for draft c9013dd6-6dd6-4563-a35b-b9b1d67fdb5d
+[2026-09-10T12:07:12.306Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 45393b68-5915-47ef-a796-91998d3da421
+[2026-09-10T12:07:20.252Z] [INFO] [AutoQueue] Automatically queued COMMENT for draft 648d7ae6-9074-4063-ab82-8083c18a866c
+[2026-09-10T12:07:27.360Z] [INFO] [AutoQueue] Automatically queued LIKE for draft a03b07f4-7bc2-4fb8-b87d-9ca71d5659f0
+[2026-09-10T12:07:34.436Z] [INFO] [AutoQueue] Automatically queued LIKE for draft e79cd3a4-7c75-49e6-ace1-7f6351ce29b1
+[2026-09-10T12:07:41.482Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 5de61011-38a9-4a42-82b6-9080406f3ccf
+[2026-09-10T12:07:44.529Z] [INFO] [ProfileActivityPostSource] OpenCLI fetched 5 posts for https://www.linkedin.com/in/colleen-ward-18abb014
+[2026-09-10T12:07:48.795Z] [INFO] [AutoQueue] Automatically queued COMMENT for draft c0553f71-7392-4f7a-9373-9a567b69862f
+[2026-09-10T12:07:56.316Z] [INFO] [AutoQueue] Automatically queued LIKE for draft ee7e5e3c-59d3-4fd6-bb22-7864c8041f32
+[2026-09-10T12:08:03.711Z] [INFO] [AutoQueue] Automatically queued COMMENT for draft f1ec14e1-9a31-463b-b150-b94df650b1c8
+[2026-09-10T12:08:11.006Z] [INFO] [AutoQueue] Automatically queued LIKE for draft de47e143-6703-461c-8412-06b2dbbb3b87
+[2026-09-10T12:08:18.064Z] [INFO] [AutoQueue] Automatically queued LIKE for draft c6e7a96f-aec0-499c-81ba-0b485531aaf7
+[2026-09-10T12:08:19.016Z] [INFO] [Engagement] Comment generation failed for post 91d61512-21e8-47fd-9e18-9f7f24bded2c; LIKE draft 21824305-5058-4c71-b456-1e5c2bbeb709 preserved as checkpoint. Catchup worker will backfill.
+[2026-09-10T12:08:25.091Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 734fbae0-fcf6-42a8-a80d-cb212cb34f22
+[2026-09-10T12:08:32.384Z] [INFO] [AutoQueue] Automatically queued LIKE for draft e7bc6902-67e2-4b18-b807-b2ec20d56f27
+[2026-09-10T12:08:39.618Z] [INFO] [AutoQueue] Automatically queued LIKE for draft d6c4ffc8-19b8-4fd4-b56c-1b5281903e69
+[2026-09-10T12:08:46.649Z] [INFO] [AutoQueue] Automatically queued LIKE for draft fa5b070e-423a-45d2-9167-8948aa7a83a1
+[2026-09-10T12:08:54.039Z] [INFO] [AutoQueue] Automatically queued COMMENT for draft cc203cbe-2a99-469a-a85f-9e5d36cf7f6a
+[2026-09-10T12:09:01.184Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 20d3e144-b55a-49b5-beb4-f6d4c255d301
+[2026-09-10T12:09:08.429Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 321cca38-0bc6-4707-a1bd-2e8735207d9f
+[2026-09-10T12:09:15.671Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 931ed55f-6a3c-4346-999f-e0023bbaf262
+[2026-09-10T12:09:23.049Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 48da7456-d996-4eb9-bb5b-2aaec2da3796
+[2026-09-10T12:09:30.375Z] [INFO] [AutoQueue] Automatically queued COMMENT for draft 8d88cbab-4468-4d4b-a53e-03971e62004f
+[2026-09-10T12:09:36.079Z] [INFO] [AutoDrain] ✓ LIKE → browser-executed
+[2026-09-10T12:09:36.340Z] [INFO] [AutoDrain] Found paired action for same prospect. Processing immediately...
+[2026-09-10T12:09:37.414Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 339f900c-c986-44ad-a730-a3349bf17ee8
+[2026-09-10T12:09:37.877Z] [INFO] [ProfileActivityPostSource] OpenCLI fetched 5 posts for https://www.linkedin.com/in/jayne-morris-46582710
+[2026-09-10T12:09:44.471Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 7b3528ab-e000-4242-84a6-b1dad60131c3
+[2026-09-10T12:09:51.518Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 5acfc141-bb61-4d8d-950a-2d32b8e1d031
+[2026-09-10T12:09:52.096Z] [INFO] [ProfileActivityPostSource] OpenCLI fetched 5 posts for https://www.linkedin.com/in/conor-broderick-14610149
+[2026-09-10T12:09:58.826Z] [INFO] [AutoQueue] Automatically queued COMMENT for draft c2df8d09-3346-4267-9b06-2d41880bd839
+[2026-09-10T12:09:59.051Z] [INFO] [AutoDrain] ✓ COMMENT (paired) → browser-executed
+[2026-09-10T12:10:03.443Z] [INFO] [ProfileActivityPostSource] OpenCLI fetched 5 posts for https://www.linkedin.com/in/jpclifford826
+[2026-09-10T12:10:04.847Z] [INFO] [AutoQueue] Automatically queued COMMENT for draft a4e61287-54e4-46df-9afe-fab6641d297b
+[2026-09-10T12:10:10.464Z] [INFO] [AutoQueue] Automatically queued COMMENT for draft 9bf03ea3-158a-4c51-9c87-38cbd86e0a92
+[2026-09-10T12:10:16.091Z] [INFO] [AutoQueue] Automatically queued COMMENT for draft df7062b7-3d53-4bee-87ff-d02e970b7a0a
+[2026-09-10T12:10:21.611Z] [INFO] [AutoQueue] Automatically queued LIKE for draft a9f7aa70-83a6-40fc-b9ab-d25eaac98203
+[2026-09-10T12:10:27.087Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 3f7932e7-45b8-4c16-a514-1092b0c0fbba
+[2026-09-10T12:10:32.462Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 70981583-dca1-473e-a365-643fb8078aa8
+[2026-09-10T12:10:38.084Z] [INFO] [Engagement] Comment generation failed for post 59c57006-f169-4f0e-bf20-76c4be18f17c; LIKE draft b76ef5cb-46b6-4f74-a269-200989f4218f preserved as checkpoint. Catchup worker will backfill.
+[2026-09-10T12:10:38.360Z] [INFO] [AutoQueue] Automatically queued COMMENT for draft edd4bac3-c42d-4a4e-b6d0-6769dadc68f3
+[2026-09-10T12:10:51.108Z] [INFO] [AutoQueue] Automatically queued LIKE for draft afc024f6-6375-43d9-8196-9491fc298c1a
+[2026-09-10T12:10:56.738Z] [INFO] [AutoQueue] Automatically queued COMMENT for draft acd83be7-2d99-44ea-b235-332b4322c774
+[2026-09-10T12:11:02.373Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 848cf88e-559c-4089-9319-bf84eb929336
+[2026-09-10T12:11:07.737Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 14bb9fc9-242f-4da8-900d-5e9acae62793
+[2026-09-10T12:11:13.146Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 26fdd646-77be-443a-8d68-ccd53e914407
+[2026-09-10T12:11:18.908Z] [INFO] [AutoQueue] Automatically queued COMMENT for draft 37180f2e-7780-4ecc-97c7-8be853a4b8c5
+[2026-09-10T12:11:24.639Z] [INFO] [AutoQueue] Automatically queued COMMENT for draft 08100a20-e2cd-4a13-aa46-914874aa41bf
+[2026-09-10T12:11:29.975Z] [INFO] [AutoQueue] Automatically queued LIKE for draft ca96a7ad-57f8-42ce-bc33-37a064711230
+[2026-09-10T12:11:36.720Z] [INFO] [AutoQueue] Automatically queued COMMENT for draft 95ee3c1f-a73b-4e91-8b36-5b459a7f9b62
+[2026-09-10T12:11:42.147Z] [INFO] [AutoQueue] Automatically queued LIKE for draft d6504145-eff9-4963-bb27-d8696a738bfb
+[2026-09-10T12:11:48.894Z] [INFO] [AutoQueue] Automatically queued COMMENT for draft 32f6b37a-be9e-4c1a-b5fd-ad941ab0d679
+[2026-09-10T12:11:54.232Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 975df8bb-ad0e-49fd-aaad-97b05dc53e3e
+[2026-09-10T12:12:00.333Z] [INFO] [AutoQueue] Automatically queued COMMENT for draft 9023afa9-f3e7-4c72-8723-88e8207da985
+[2026-09-10T12:12:05.676Z] [INFO] [AutoQueue] Automatically queued LIKE for draft a5f923e8-8d68-4e1b-9706-d95230cb37c7
+[2026-09-10T12:12:12.461Z] [INFO] [AutoQueue] Automatically queued COMMENT for draft c91073fc-dd3f-4892-8354-4be4e12e96b1
+[2026-09-10T12:12:18.289Z] [INFO] [AutoQueue] Automatically queued LIKE for draft b2fa6d8d-e1dc-4caa-9943-21be61782ad0
+[2026-09-10T12:12:21.050Z] [INFO] [Engagement] Comment generation failed for post 769aabf4-a069-4aea-a7d2-dd3140484414; LIKE draft 07d3deed-fc81-4a23-8b18-93673e9fd9e4 preserved as checkpoint. Catchup worker will backfill.
+[2026-09-10T12:12:25.032Z] [INFO] [AutoQueue] Automatically queued COMMENT for draft 3e8e88ae-985e-474e-82ad-07ca3b327ace
+[2026-09-10T12:12:30.365Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 4dc766a9-3561-431a-9c7d-04b6af08a6b4
+[2026-09-10T12:12:35.052Z] [INFO] [AutoDrain] ✓ LIKE → browser-executed
+[2026-09-10T12:12:37.122Z] [INFO] [AutoQueue] Automatically queued COMMENT for draft e185dd05-cfa6-4634-a3b7-d4c7d2fffb78
+[2026-09-10T12:12:42.531Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 5eb17d83-ad3a-4256-a90d-23474fa42a05
+[2026-09-10T12:12:49.358Z] [INFO] [AutoQueue] Automatically queued COMMENT for draft ffd036fc-4f3b-4279-a571-7050e28777ac
+[2026-09-10T12:12:54.770Z] [INFO] [AutoQueue] Automatically queued LIKE for draft b2e70065-505d-4366-9d28-1f9984a9d835
+[2026-09-10T12:13:00.558Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 838fddee-a837-457e-bb99-6934817a99ec
+[2026-09-10T12:13:07.336Z] [INFO] [AutoQueue] Automatically queued COMMENT for draft 5e4926b1-ae2e-4993-bef9-0be648a2d984
+[2026-09-10T12:13:12.730Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 82a8ae4e-63c9-4944-87d0-76f9eb8e3450
+[2026-09-10T12:13:19.541Z] [INFO] [AutoQueue] Automatically queued COMMENT for draft fcaa1909-781d-4a61-8148-79ebdb31e13f
+[2026-09-10T12:13:24.914Z] [INFO] [AutoQueue] Automatically queued LIKE for draft f34bf120-07e2-4823-8995-6dcae1702f7c
+[2026-09-10T12:13:28.473Z] [INFO] [Engagement] Comment generation failed for post 057258e4-7e6a-4f21-bba2-05102f30e79f; LIKE draft 31843878-e86a-4411-b7ec-261e749b4307 preserved as checkpoint. Catchup worker will backfill.
+[2026-09-10T12:13:30.251Z] [INFO] [AutoQueue] Automatically queued LIKE for draft de0f4f12-5257-41ae-b89e-d0d810972d69
+[2026-09-10T12:13:36.230Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 3626a449-be00-4942-9d13-46a1c012b324
+[2026-09-10T12:13:42.163Z] [INFO] [AutoQueue] Automatically queued LIKE for draft bfceeb43-b50f-49e2-a23d-fd12985f6ac5
+[2026-09-10T12:13:48.155Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 766ba1ca-63b8-483c-abf4-6ac28d191135
+[2026-09-10T12:13:54.924Z] [INFO] [AutoQueue] Automatically queued COMMENT for draft 8f2fd15a-7f0b-4d41-b7e3-a3507ac625d1
+[2026-09-10T12:14:01.390Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 941fb745-3a6c-41ec-8ed9-f5728e8e2c71
+[2026-09-10T12:14:07.422Z] [INFO] [AutoQueue] Automatically queued LIKE for draft d4e7313b-a274-4ccc-b03c-6cce8dc13a27
+[2026-09-10T12:14:13.326Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 9ffd1e6c-5eac-42f8-8aef-6ca9631e9755
+[2026-09-10T12:14:18.780Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 71bf7db3-4b3c-4019-84eb-df6ad61a4059
+[2026-09-10T12:14:24.180Z] [INFO] [AutoQueue] Automatically queued LIKE for draft e4cc971a-4b58-48f0-9774-56ac7984196c
+[2026-09-10T12:14:29.659Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 0300ddc0-7c71-4cf9-9d2e-e9c3ee885d24
+[2026-09-10T12:14:35.241Z] [INFO] [AutoQueue] Automatically queued LIKE for draft c5d60db3-ecb9-4014-8f36-08c5d1bc8f3f
+[2026-09-10T12:14:40.583Z] [INFO] [AutoQueue] Automatically queued LIKE for draft db847325-01c8-4000-ade2-d87771af43b4
+[2026-09-10T12:14:46.043Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 3793ba1c-eee3-4c7e-9b68-80d6962f033d
+[2026-09-10T12:14:51.421Z] [INFO] [AutoQueue] Automatically queued LIKE for draft ea260886-8edd-4538-82c1-a013ca3894e9
+[2026-09-10T12:14:56.824Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 824e2b0f-6f8c-435f-be68-9cf5063ca4f6
+[2026-09-10T12:15:02.365Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 591e6fe6-4911-4253-9dc0-ebd54caa0ded
+[2026-09-10T12:15:07.780Z] [INFO] [AutoQueue] Automatically queued LIKE for draft dfa7b9a1-c89f-444b-ac4b-123d4a9782cf
+[2026-09-10T12:15:09.476Z] [INFO] [Engagement] Comment generation failed for post c163de00-09c7-4594-908c-86c319d2f685; LIKE draft 562ceaf5-ab54-4c50-971e-8c3ce0974083 preserved as checkpoint. Catchup worker will backfill.
+[2026-09-10T12:15:13.262Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 30a6d232-ce65-4ca7-ace8-c9b3c4edf1f5
+[2026-09-10T12:15:19.262Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 93691675-ea07-46dd-8a4d-3c15230c2024
+[2026-09-10T12:15:24.595Z] [INFO] [AutoQueue] Automatically queued LIKE for draft faa39ff2-c007-43d8-81f7-3e35f789e457
+[2026-09-10T12:15:30.022Z] [INFO] [AutoQueue] Automatically queued LIKE for draft fe53b88a-67c7-4c16-9e17-e00206add402
+[2026-09-10T12:15:34.123Z] [INFO] [AutoDrain] ✓ LIKE → browser-executed
+[2026-09-10T12:15:35.355Z] [INFO] [AutoQueue] Automatically queued LIKE for draft a5a4df7c-e809-4c97-9fe0-9131cfe393db
+[2026-09-10T12:15:40.803Z] [INFO] [AutoQueue] Automatically queued LIKE for draft d6fa79cb-24b6-4909-8a3d-76d01424e1a1
+[2026-09-10T12:15:46.587Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 94d78d74-7563-43a8-a4b1-e09d3784bbdb
+[2026-09-10T12:15:51.979Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 95babdf6-630b-44de-9685-5c8c8fe6db6e
+[2026-09-10T12:15:57.402Z] [INFO] [AutoQueue] Automatically queued LIKE for draft e586a5f4-e81b-451d-9a4d-e832401468b9
+[2026-09-10T12:16:02.951Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 4e643420-d75f-4e38-9f6e-12e10bd635b0
+[2026-09-10T12:16:08.291Z] [INFO] [AutoQueue] Automatically queued LIKE for draft cf6749a3-156a-47e1-a50c-15fdbe6423ae
+[2026-09-10T12:16:13.805Z] [INFO] [AutoQueue] Automatically queued LIKE for draft a156827b-e0e8-488d-bfe2-5ead92911be3
+[2026-09-10T12:16:17.106Z] [INFO] [Engagement] Comment generation failed for post b33c8ef3-c421-4bd6-ab9b-d347d3918ec0; LIKE draft 58cd93cc-4db3-49c3-a6c8-3ef3fdef7d97 preserved as checkpoint. Catchup worker will backfill.
+[2026-09-10T12:16:19.451Z] [INFO] [AutoQueue] Automatically queued COMMENT for draft d2c09f04-5817-4ca4-99f8-b587bb256891
+[2026-09-10T12:16:25.349Z] [INFO] [AutoQueue] Automatically queued COMMENT for draft 74cb6727-9d15-4ab9-9542-804632bbb12a
+[2026-09-10T12:16:30.764Z] [INFO] [AutoQueue] Automatically queued LIKE for draft b76ef5cb-46b6-4f74-a269-200989f4218f
+[2026-09-10T12:16:36.177Z] [INFO] [AutoQueue] Automatically queued LIKE for draft b1d97b2e-7350-4af0-a2db-b54bd28105af
+[2026-09-10T12:16:41.697Z] [INFO] [AutoQueue] Automatically queued LIKE for draft cb60d584-7c46-4af5-967a-b1a865ee9011
+[2026-09-10T12:16:47.571Z] [INFO] [AutoQueue] Automatically queued COMMENT for draft 294a2998-0af4-4c2e-82c1-76b2a7d077bc
+[2026-09-10T12:16:53.102Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 7a393fc7-259d-4e7a-abef-d82969686409
+[2026-09-10T12:16:59.989Z] [INFO] [AutoQueue] Automatically queued COMMENT for draft d5582127-46c7-4fee-a939-f3a94b85e123
+[2026-09-10T12:17:05.544Z] [INFO] [AutoQueue] Automatically queued LIKE for draft f2e11bb6-0c71-4c3a-a54f-0ebc93a41d7c
+[2026-09-10T12:17:10.943Z] [INFO] [AutoQueue] Automatically queued LIKE for draft d83357c2-ad4e-4248-a5f9-80fd2ab4bf05
+[2026-09-10T12:17:16.961Z] [INFO] [AutoQueue] Automatically queued LIKE for draft bb218284-c03f-4019-b02d-eb121cc9f14b
+[2026-09-10T12:17:22.975Z] [INFO] [AutoQueue] Automatically queued LIKE for draft a5030c61-d5f0-43b3-ba71-e7da47413ab8
+[2026-09-10T12:17:26.470Z] [INFO] [Engagement] Comment generation failed for post 7852533f-1bcb-403e-8b3e-bccc3fbe2357; LIKE draft 712821c1-4943-4e82-a7d6-56204458ae16 preserved as checkpoint. Catchup worker will backfill.
+[2026-09-10T12:17:29.790Z] [INFO] [AutoQueue] Automatically queued COMMENT for draft 8f221f96-7648-4e6e-b379-a25a35603eef
+[2026-09-10T12:17:35.263Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 21824305-5058-4c71-b456-1e5c2bbeb709
+[2026-09-10T12:17:40.777Z] [INFO] [AutoQueue] Automatically queued LIKE for draft acf45348-849a-44ad-9022-28b498b0d8a1
+[2026-09-10T12:17:46.862Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 411ee269-8436-43f6-b8b8-f823f224d4f4
+[2026-09-10T12:17:52.339Z] [INFO] [AutoQueue] Automatically queued LIKE for draft a396699b-1a4e-4dd4-8ac0-e1e7754322b1
+[2026-09-10T12:17:57.959Z] [INFO] [AutoQueue] Automatically queued COMMENT for draft 9d3cfdc7-d99e-41e3-8cee-31033c6c61e2
+[2026-09-10T12:18:03.492Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 70117946-bf58-420d-bc71-30eb3770575d
+[2026-09-10T12:18:09.120Z] [INFO] [AutoQueue] Automatically queued COMMENT for draft 6f2b57f1-a1f4-4b2d-9db1-3b7eeda6b761
+[2026-09-10T12:18:14.507Z] [INFO] [AutoQueue] Automatically queued LIKE for draft f6a62d71-de58-46e1-a94f-eb668735daa2
+[2026-09-10T12:18:20.122Z] [INFO] [AutoQueue] Automatically queued COMMENT for draft 41b0cdd4-a3cf-40f6-a627-f2a1f9c01a15
+[2026-09-10T12:18:25.899Z] [INFO] [AutoQueue] Automatically queued COMMENT for draft 4843cb78-0bed-4ca5-ab00-38eccb45c194
+[2026-09-10T12:18:31.330Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 07d3deed-fc81-4a23-8b18-93673e9fd9e4
+[2026-09-10T12:18:34.021Z] [INFO] [AutoDrain] ✓ LIKE → browser-executed
+[2026-09-10T12:18:35.511Z] [INFO] [Engagement] Comment generation failed for post f440ea12-c5a8-4bd0-8a4d-f00e91e25fe7; LIKE draft fa6db8dd-5348-4a2e-a36e-36ee35d7cce0 preserved as checkpoint. Catchup worker will backfill.
+[2026-09-10T12:18:36.737Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 31843878-e86a-4411-b7ec-261e749b4307
+[2026-09-10T12:18:42.078Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 712821c1-4943-4e82-a7d6-56204458ae16
+[2026-09-10T12:18:47.842Z] [INFO] [AutoQueue] Automatically queued LIKE for draft fa6db8dd-5348-4a2e-a36e-36ee35d7cce0
+[2026-09-10T12:18:53.937Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 41ca5161-4014-4936-8d13-8c851d1c8bea
+[2026-09-10T12:18:59.309Z] [INFO] [AutoQueue] Automatically queued LIKE for draft ffd784d0-d919-4f62-9e18-bf147feb91d3
+[2026-09-10T12:19:04.684Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 47cc52c3-03fd-4910-ac39-244d5feac9c3
+[2026-09-10T12:19:10.046Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 562ceaf5-ab54-4c50-971e-8c3ce0974083
+[2026-09-10T12:19:16.006Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 58cd93cc-4db3-49c3-a6c8-3ef3fdef7d97
+[2026-09-10T12:19:21.423Z] [INFO] [AutoQueue] Automatically queued LIKE for draft 5ee47411-80e7-42fc-b7c6-a6346e7e7654
+[2026-09-10T12:19:42.709Z] [INFO] [Engagement] Comment generation failed for post f8ad17d0-21b5-46a1-a3e2-3be902043fe0; LIKE draft 41ca5161-4014-4936-8d13-8c851d1c8bea preserved as checkpoint. Catchup worker will backfill.
+[2026-09-10T12:20:27.607Z] [INFO] [Engagement] Comment generation failed for post 6e972486-d712-4552-b4d4-583d09b97879; LIKE draft ffd784d0-d919-4f62-9e18-bf147feb91d3 preserved as checkpoint. Catchup worker will backfill.
+[2026-09-10T12:21:15.169Z] [INFO] [ProfileActivityPostSource] OpenCLI fetched 5 posts for https://www.linkedin.com/in/larry-mims-9713575
+[2026-09-10T12:21:36.532Z] [INFO] [AutoDrain] ✓ LIKE → browser-executed
+[2026-09-10T12:21:49.755Z] [INFO] [Engagement] Comment generation failed for post 2d223625-32db-4abc-bf02-56197c6d22d9; LIKE draft 5ee47411-80e7-42fc-b7c6-a6346e7e7654 preserved as checkpoint. Catchup worker will backfill.
+[2026-09-10T12:22:21.661Z] [INFO] [ScanResume] Periodic resume completed: scanned 60 prospects, backfilled 5 drafts.
+[2026-09-10T12:24:34.079Z] [INFO] [AutoDrain] ✓ LIKE → browser-executed
+[2026-09-10T12:24:34.350Z] [INFO] [AutoDrain] Found paired action for same prospect. Processing immediately...
+[2026-09-10T12:24:56.656Z] [INFO] [AutoDrain] ✓ COMMENT (paired) → browser-executed
+[2026-09-10T12:25:31.123Z] [INFO] [ProfileActivityPostSource] OpenCLI fetched 5 posts for https://www.linkedin.com/in/marybethstankovits
+[2026-09-10T12:26:05.470Z] [INFO] [Engagement] Comment generation failed for post f680fe32-e1bc-4fa4-99c6-45f4a8a7b7e1; LIKE draft a03b07f4-7bc2-4fb8-b87d-9ca71d5659f0 preserved as checkpoint. Catchup worker will backfill.
+[2026-09-10T12:27:11.374Z] [INFO] [Engagement] Comment generation failed for post f01f0c62-8190-431e-bc6e-f452be2385d5; LIKE draft e79cd3a4-7c75-49e6-ace1-7f6351ce29b1 preserved as checkpoint. Catchup worker will backfill.
+[2026-09-10T12:27:32.694Z] [INFO] [AutoDrain] ✓ LIKE → browser-executed
+[2026-09-10T12:28:13.527Z] [INFO] [ProfileActivityPostSource] OpenCLI fetched 5 posts for https://www.linkedin.com/in/danny-hall-67583846
+[2026-09-10T12:28:48.008Z] [INFO] [Engagement] Comment generation failed for post 92ee3950-0331-4097-b838-b598890361e4; LIKE draft de47e143-6703-461c-8412-06b2dbbb3b87 preserved as checkpoint. Catchup worker will backfill.
+[2026-09-10T12:29:53.850Z] [INFO] [ProfileActivityPostSource] OpenCLI fetched 5 posts for https://www.linkedin.com/in/kieran-fielding-3ba866150
+[2026-09-10T12:30:15.456Z] [INFO] [ProfileActivityPostSource] OpenCLI fetched 5 posts for https://www.linkedin.com/in/se%c3%a1n-carter-16898811
+[2026-09-10T12:30:28.454Z] [INFO] [ProfileActivityPostSource] OpenCLI fetched 5 posts for https://www.linkedin.com/in/kevinpalisi
+[2026-09-10T12:30:35.441Z] [INFO] [AutoDrain] ✓ LIKE → browser-executed
+[2026-09-10T12:31:03.928Z] [INFO] [Engagement] Comment generation failed for post 4cc5d2fb-e945-4f84-93ea-f6a5db3fd2cd; LIKE draft 20d3e144-b55a-49b5-beb4-f6d4c255d301 preserved as checkpoint. Catchup worker will backfill.
+[2026-09-10T12:31:45.662Z] [INFO] [ProfileActivityPostSource] OpenCLI fetched 5 posts for https://www.linkedin.com/in/dannybygraverecruiter
+[2026-09-10T12:32:20.060Z] [INFO] [Engagement] Comment generation failed for post 918c9467-8cc6-4e6f-9aa0-2acbf1d58716; LIKE draft 321cca38-0bc6-4707-a1bd-2e8735207d9f preserved as checkpoint. Catchup worker will backfill.
+[2026-09-10T12:33:26.079Z] [INFO] [Engagement] Comment generation failed for post f3110f19-05c2-4fd6-bd24-a5e6de7a821c; LIKE draft 931ed55f-6a3c-4346-999f-e0023bbaf262 preserved as checkpoint. Catchup worker will backfill.
+[2026-09-10T12:33:35.240Z] [INFO] [AutoDrain] ✓ LIKE → browser-executed
+[2026-09-10T12:33:35.523Z] [INFO] [AutoDrain] Found paired action for same prospect. Processing immediately...
+[2026-09-10T12:33:57.834Z] [INFO] [AutoDrain] ✓ COMMENT (paired) → browser-executed
+[2026-09-10T12:34:12.044Z] [INFO] [ProfileActivityPostSource] OpenCLI fetched 5 posts for https://www.linkedin.com/in/anomi-fernando-csp-81109357
+[2026-09-10T12:34:46.565Z] [INFO] [Engagement] Comment generation failed for post 15aefe45-1bbf-4e09-a6e2-2d1bc0bc738c; LIKE draft 339f900c-c986-44ad-a730-a3349bf17ee8 preserved as checkpoint. Catchup worker will backfill.
+[2026-09-10T12:35:45.237Z] [INFO] [ProfileActivityPostSource] OpenCLI fetched 5 posts for https://www.linkedin.com/in/phyllis-m-92ba3616
+[2026-09-10T12:36:19.825Z] [INFO] [Engagement] Comment generation failed for post 68075926-e56f-4b24-bfaf-2f81a0190591; LIKE draft 5acfc141-bb61-4d8d-950a-2d32b8e1d031 preserved as checkpoint. Catchup worker will backfill.
+[2026-09-10T12:36:33.107Z] [ERROR] [AutoDrain] ✗ LIKE FAILED → POST_NOT_ELIGIBLE
+[2026-09-10T12:37:04.274Z] [INFO] [ProfileActivityPostSource] OpenCLI fetched 5 posts for https://www.linkedin.com/in/jodyfox
+[2026-09-10T12:37:16.391Z] [INFO] [ProfileActivityPostSource] OpenCLI fetched 5 posts for https://www.linkedin.com/in/angelalewis17
+[2026-09-10T12:37:28.500Z] [INFO] [ProfileActivityPostSource] OpenCLI fetched 5 posts for https://www.linkedin.com/in/catherine-maitland-136b2bb
+[2026-09-10T12:38:06.422Z] [INFO] [Engagement] Comment generation failed for post d50a6851-7a61-4f96-abf1-f51eb0e1f5f5; LIKE draft 8640ddbe-5adb-40a2-ba48-3d3dbacd4f00 preserved as checkpoint. Catchup worker will backfill.
+[2026-09-10T12:39:23.671Z] [INFO] [ProfileActivityPostSource] OpenCLI fetched 5 posts for https://www.linkedin.com/in/gary-reba-58a1681
+[2026-09-10T12:39:30.412Z] [ERROR] [AutoDrain] ✗ COMMENT FAILED → POST_NOT_ELIGIBLE
+[2026-09-10T12:39:36.332Z] [INFO] [ProfileActivityPostSource] OpenCLI fetched 3 posts for https://www.linkedin.com/in/rudibellinazzo
+[2026-09-10T12:39:48.020Z] [INFO] [ProfileActivityPostSource] OpenCLI fetched 5 posts for https://www.linkedin.com/in/lisa-halshaw-2a773911
+[2026-09-10T12:40:23.074Z] [INFO] [Engagement] Comment generation failed for post a0ec0351-65d9-41a6-a808-eac3bf44c3cc; LIKE draft 7bee79a8-cb39-4bcb-86f0-cd6d510f08a2 preserved as checkpoint. Catchup worker will backfill.
+[2026-09-10T12:42:11.840Z] [INFO] [ProfileActivityPostSource] OpenCLI fetched 5 posts for https://www.linkedin.com/in/stevecamplin
+[2026-09-10T12:42:36.251Z] [INFO] [AutoDrain] ✓ LIKE → browser-executed
+[2026-09-10T12:42:46.935Z] [INFO] [Engagement] Comment generation failed for post a3214a0c-c07f-4443-ae9e-104aea19890c; LIKE draft dec17c3c-6d74-4b36-ad1d-b2d2c9046546 preserved as checkpoint. Catchup worker will backfill.
+[2026-09-10T12:44:38.044Z] [INFO] [ProfileActivityPostSource] OpenCLI fetched 5 posts for https://www.linkedin.com/in/laura-hitchens-12651020
+[2026-09-10T12:45:12.899Z] [INFO] [Engagement] Comment generation failed for post b3caeab5-7e54-4b6b-9b9b-0ad2117477a0; LIKE draft c9013dd6-6dd6-4563-a35b-b9b1d67fdb5d preserved as checkpoint. Catchup worker will backfill.
+[2026-09-10T12:45:33.205Z] [ERROR] [AutoDrain] ✗ LIKE FAILED → SELECTOR_MISMATCH
+[2026-09-10T12:47:10.765Z] [INFO] ◇ injected env (0) from .env [2m// tip: ⌘ custom filepath { path: '/custom/path/.env' }[0m
+[2026-09-10T12:47:10.769Z] [INFO] [AutoDrain] Server-side queue drain worker started (gap: 180s)
+[2026-09-10T12:47:10.770Z] [INFO] [AutoQueue] Auto-approve and queue worker started (every 30s)
+[2026-09-10T12:47:10.770Z] [INFO] [ScanResume] Campaign scan resume worker started (every 10m)
+[2026-09-10T12:47:10.770Z] [INFO] RecruitmentOS ICP server listening on http://localhost:3000
+[2026-09-10T12:47:24.671Z] [INFO] ◇ injected env (0) from .env [2m// tip: ⌘ enable debugging { debug: true }[0m
+[2026-09-10T12:47:24.678Z] [INFO] [AutoDrain] Server-side queue drain worker started (gap: 180s)
+[2026-09-10T12:47:24.678Z] [INFO] [AutoQueue] Auto-approve and queue worker started (every 30s)
+[2026-09-10T12:47:24.678Z] [INFO] [ScanResume] Campaign scan resume worker started (every 10m)
+[2026-09-10T12:47:24.682Z] [INFO] RecruitmentOS ICP server listening on http://localhost:3000
+[2026-09-10T12:47:29.930Z] [INFO] ◇ injected env (0) from .env [2m// tip: ⌁ auth for agents [www.vestauth.com][0m
+[2026-09-10T12:47:29.934Z] [INFO] [AutoDrain] Server-side queue drain worker started (gap: 180s)
+[2026-09-10T12:47:29.934Z] [INFO] [AutoQueue] Auto-approve and queue worker started (every 30s)
+[2026-09-10T12:47:29.934Z] [INFO] [ScanResume] Campaign scan resume worker started (every 10m)
+[2026-09-10T12:47:29.935Z] [INFO] RecruitmentOS ICP server listening on http://localhost:3000
+[2026-09-10T12:47:54.726Z] [INFO] ◇ injected env (0) from .env [2m// tip: ⌁ auth for agents [www.vestauth.com][0m
+[2026-09-10T12:47:54.731Z] [INFO] [AutoDrain] Server-side queue drain worker started (gap: 180s)
+[2026-09-10T12:47:54.731Z] [INFO] [AutoQueue] Auto-approve and queue worker started (every 30s)
+[2026-09-10T12:47:54.731Z] [INFO] [ScanResume] Campaign scan resume worker started (every 10m)
+[2026-09-10T12:47:54.733Z] [INFO] RecruitmentOS ICP server listening on http://localhost:3000
+[2026-09-10T12:51:13.964Z] [INFO] [AutoDrain] ✓ LIKE → browser-executed
+[2026-09-10T12:51:14.235Z] [INFO] [AutoDrain] Found paired action for same prospect. Processing immediately...
+[2026-09-10T12:51:18.623Z] [INFO] [AutoDrain] ✓ LIKE (paired) → COOLDOWN_ACTIVE
+[2026-09-10T12:54:14.486Z] [INFO] [AutoDrain] ✓ LIKE → browser-executed
+[2026-09-10T12:57:12.306Z] [INFO] [AutoDrain] ✓ LIKE → browser-executed
+[2026-09-10T12:57:12.578Z] [INFO] [AutoDrain] Found paired action for same prospect. Processing immediately...
+[2026-09-10T12:57:35.039Z] [INFO] [AutoDrain] ✓ COMMENT (paired) → browser-executed
+[2026-09-10T12:58:06.841Z] [INFO] [ProfileActivityPostSource] OpenCLI fetched 5 posts for https://www.linkedin.com/in/marybethstankovits
+[2026-09-10T12:58:41.262Z] [INFO] [Engagement] Comment generation failed for post f680fe32-e1bc-4fa4-99c6-45f4a8a7b7e1; LIKE draft a03b07f4-7bc2-4fb8-b87d-9ca71d5659f0 preserved as checkpoint. Catchup worker will backfill.
+[2026-09-10T12:59:47.316Z] [INFO] [Engagement] Comment generation failed for post f01f0c62-8190-431e-bc6e-f452be2385d5; LIKE draft e79cd3a4-7c75-49e6-ace1-7f6351ce29b1 preserved as checkpoint. Catchup worker will backfill.
+[2026-09-10T13:00:14.234Z] [INFO] [AutoDrain] ✓ LIKE → browser-executed
+[2026-09-10T13:00:49.270Z] [INFO] [ProfileActivityPostSource] OpenCLI fetched 5 posts for https://www.linkedin.com/in/danny-hall-67583846
+[2026-09-10T13:01:23.704Z] [INFO] [Engagement] Comment generation failed for post 92ee3950-0331-4097-b838-b598890361e4; LIKE draft de47e143-6703-461c-8412-06b2dbbb3b87 preserved as checkpoint. Catchup worker will backfill.
+[2026-09-10T13:02:08.424Z] [INFO] [ProfileActivityPostSource] OpenCLI fetched 5 posts for https://www.linkedin.com/in/kieran-fielding-3ba866150
+[2026-09-10T13:02:20.881Z] [INFO] [ProfileActivityPostSource] OpenCLI fetched 5 posts for https://www.linkedin.com/in/shany-medina-6b482127
+[2026-09-10T13:02:31.501Z] [INFO] [ProfileActivityPostSource] OpenCLI fetched 5 posts for https://www.linkedin.com/in/se%c3%a1n-carter-16898811
+[2026-09-10T13:02:51.277Z] [INFO] [ProfileActivityPostSource] OpenCLI fetched 5 posts for https://www.linkedin.com/in/stevenraz
+[2026-09-10T13:03:04.096Z] [INFO] [ProfileActivityPostSource] OpenCLI fetched 5 posts for https://www.linkedin.com/in/prestigescientific
+[2026-09-10T13:03:19.633Z] [INFO] [AutoDrain] ✓ LIKE → browser-executed
+[2026-09-10T13:03:49.534Z] [INFO] [Engagement] Comment generation failed for post 918c9467-8cc6-4e6f-9aa0-2acbf1d58716; LIKE draft 321cca38-0bc6-4707-a1bd-2e8735207d9f preserved as checkpoint. Catchup worker will backfill.
+[2026-09-10T13:04:32.435Z] [INFO] [Engagement] Comment generation failed for post f3110f19-05c2-4fd6-bd24-a5e6de7a821c; LIKE draft 931ed55f-6a3c-4346-999f-e0023bbaf262 preserved as checkpoint. Catchup worker will backfill.
+[2026-09-10T13:05:16.416Z] [INFO] [ProfileActivityPostSource] OpenCLI fetched 5 posts for https://www.linkedin.com/in/anomi-fernando-csp-81109357
+[2026-09-10T13:05:50.758Z] [INFO] [Engagement] Comment generation failed for post 15aefe45-1bbf-4e09-a6e2-2d1bc0bc738c; LIKE draft 339f900c-c986-44ad-a730-a3349bf17ee8 preserved as checkpoint. Catchup worker will backfill.
+[2026-09-10T13:06:12.192Z] [INFO] [AutoDrain] ✓ LIKE → browser-executed
+[2026-09-10T13:06:34.804Z] [INFO] [ProfileActivityPostSource] OpenCLI fetched 5 posts for https://www.linkedin.com/in/phyllis-m-92ba3616
+[2026-09-10T13:07:09.238Z] [INFO] [Engagement] Comment generation failed for post 68075926-e56f-4b24-bfaf-2f81a0190591; LIKE draft 5acfc141-bb61-4d8d-950a-2d32b8e1d031 preserved as checkpoint. Catchup worker will backfill.
+[2026-09-10T13:07:22.075Z] [INFO] ◇ injected env (0) from .env [2m// tip: ⌘ suppress logs { quiet: true }[0m
+[2026-09-10T13:07:22.079Z] [INFO] [AutoDrain] Server-side queue drain worker started (gap: 180s)
+[2026-09-10T13:07:22.079Z] [INFO] [AutoQueue] Auto-approve and queue worker started (every 30s)
+[2026-09-10T13:07:22.079Z] [INFO] [ScanResume] Campaign scan resume worker started (every 10m)
+[2026-09-10T13:07:22.080Z] [INFO] RecruitmentOS ICP server listening on http://localhost:3000
