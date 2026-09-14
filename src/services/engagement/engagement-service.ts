@@ -17,6 +17,7 @@ import {
   campaignEnrollments,
   accountPostComments,
   campaigns,
+  icpEvaluations,
 } from '../../db/schema.js';
 import { withDbRetry, isTransientDbError } from '../../db/retry.js';
 import { DEFAULT_OPERATOR_ID } from '../../types.js';
@@ -25,7 +26,7 @@ import type { EngagementDraft, EngagementHistory, LinkedInPost, CommentDraft } f
 import type { ProspectPostSource } from './prospect-post-source.js';
 import { normaliseRawPost, type RawPost } from './prospect-post-source.js';
 
-import { canonicalPostIdentifier } from './post-identity.js';
+import { canonicalPostIdentifier, isValidLinkedInPostUrl } from './post-identity.js';
 import { PostFilter, type PostFilterOptions } from './post-filter.js';
 import type { EngagementAIProvider } from './engagement-ai-provider.js';
 import { CommentValidator } from './comment-validator.js';
@@ -95,6 +96,11 @@ export class EngagementService {
   private readonly validator: CommentValidator;
   private readonly cooldown: CooldownPolicy;
   private readonly db: DbClient;
+  private activeScans = 0;
+
+  get isScanningActive(): boolean {
+    return this.activeScans > 0;
+  }
 
   constructor(opts: {
     postSource: ProspectPostSource;
@@ -118,7 +124,9 @@ export class EngagementService {
     prospectId: string,
     voiceProfile?: string,
   ): Promise<ScanProspectResult> {
-    const result: ScanProspectResult = {
+    this.activeScans++;
+    try {
+      const result: ScanProspectResult = {
       prospectId,
       postsFound: 0,
       postsFiltered: 0,
@@ -215,9 +223,14 @@ export class EngagementService {
       return result;
     }
 
-    // Filter out raw posts that already have a comment slot with status PENDING, COMPLETED, or UNCERTAIN
+    // Filter out raw posts that have invalid URLs or already have a comment slot with status PENDING, COMPLETED, or UNCERTAIN
     const eligibleRawPosts: typeof rawPosts = [];
     for (const rp of rawPosts) {
+      if (!isValidLinkedInPostUrl(rp.postUrl)) {
+        result.postsFiltered++;
+        console.log(`[EngagementService] Skipping post with invalid LinkedIn URL: ${rp.postUrl}`);
+        continue;
+      }
       const canonicalId = canonicalPostIdentifier(rp.postUrl);
       const existingSlot = await this.db.query.accountPostComments.findFirst({
         where: and(
@@ -235,7 +248,7 @@ export class EngagementService {
 
     // 4. Filter posts
     const { kept, rejected } = this.postFilter.filter(eligibleRawPosts);
-    result.postsFiltered = rejected.length;
+    result.postsFiltered += rejected.length;
 
     // Ensure we have at least 1 post per prospect (if available)
     if (kept.length < maxNewPostsAllowed) {
@@ -246,22 +259,7 @@ export class EngagementService {
           if (!kept.includes(rp)) kept.push(rp);
         }
       }
-
-      const attrs = (prospect.customAttributes as Record<string, any>) ?? {};
-      const companyName = attrs.company || 'our agency';
-      const authorName = attrs.name || 'Prospect';
-      const profileBase = prospect.linkedinUrl.replace(/\/?$/, '');
-
-      if (rawPosts.length === 0) {
-        if (kept.length === 0 && maxNewPostsAllowed >= 1) {
-          kept.push({
-            postUrl: `${profileBase}/recent-activity/all/#post-0`,
-            postText: `Sharing our latest milestones at ${companyName}. Thrilled to see our recruitment operations, client partnerships, and team expanding as we head into the next quarter!`,
-            authorName,
-            publishedAt: new Date(),
-          });
-        }
-      }
+      // No synthetic posts: if no verifiable real posts, kept remains empty and no drafts are created.
     }
 
     // 5. Select top best posts using LLM if more than maxNewPostsAllowed posts were found
@@ -326,7 +324,10 @@ export class EngagementService {
       }
     }
 
-    return result;
+      return result;
+    } finally {
+      this.activeScans = Math.max(0, this.activeScans - 1);
+    }
   }
 
   private async generateCommentWithRetry(input: Parameters<EngagementAIProvider['generateComment']>[0]) {
@@ -694,6 +695,9 @@ export class EngagementService {
       revision = rev;
     }
     if (!post || !prospect || !revision) throw new Error('APPROVAL_REQUIRED');
+    if (!isValidLinkedInPostUrl(post.postUrl)) {
+      throw new Error('POST_NOT_ELIGIBLE');
+    }
     if (revision.actionType !== request.actionType) throw new Error('APPROVAL_INVALIDATED');
     if (prospect.currentStage !== 'READY_FOR_CAMPAIGN' && prospect.currentStage !== 'APPROVED_FOR_OUTREACH') throw new Error('PROSPECT_NOT_READY');
     if (revision.postHash !== post.contentHash) throw new Error('APPROVAL_INVALIDATED');
@@ -892,7 +896,7 @@ export class EngagementService {
       commentText: row.commentText,
       editedText: row.editedText ?? undefined,
       status: row.status as EngagementDraft['status'],
-      provider: row.provider as 'luna' | 'fake',
+      provider: row.provider as 'luna' | 'gemini' | 'fake',
       providerMetadata: (row.providerMetadata as Record<string, unknown>) ?? undefined,
       validationReport: (row.validationReport as Record<string, unknown>) ?? undefined,
       createdAt: row.createdAt,
@@ -1134,99 +1138,135 @@ export class EngagementService {
     firstArg?: string,
     secondArg?: string,
   ): Promise<{ status: 'completed'; prospectsScanned: number; draftsBackfilled: number; errors: string[] }> {
-    let tenantId = '00000000-0000-0000-0000-000000000001';
-    let campaignId: string | undefined;
+    this.activeScans++;
+    try {
+      let tenantId = '00000000-0000-0000-0000-000000000001';
+      let campaignId: string | undefined;
 
-    const arg1 = firstArg?.trim() || undefined;
-    const arg2 = secondArg?.trim() || undefined;
+      const arg1 = firstArg?.trim() || undefined;
+      const arg2 = secondArg?.trim() || undefined;
 
-    if (arg1 && arg2) {
-      tenantId = arg1;
-      campaignId = arg2;
-    } else if (arg1 && !arg2) {
-      const foundCampaign = await withDbRetry(() =>
-        this.db.query.campaigns.findFirst({
-          where: eq(campaigns.id, arg1),
-        })
-      ).catch(() => undefined);
-
-      if (foundCampaign) {
-        campaignId = arg1;
-        tenantId = foundCampaign.tenantId;
-      } else {
+      if (arg1 && arg2) {
         tenantId = arg1;
-        campaignId = undefined;
+        campaignId = arg2;
+      } else if (arg1 && !arg2) {
+        const foundCampaign = await withDbRetry(() =>
+          this.db.query.campaigns.findFirst({
+            where: eq(campaigns.id, arg1),
+          })
+        ).catch(() => undefined);
+
+        if (foundCampaign) {
+          campaignId = arg1;
+          tenantId = foundCampaign.tenantId;
+        } else {
+          tenantId = arg1;
+          campaignId = undefined;
+        }
+      } else if (!arg1 && arg2) {
+        campaignId = arg2;
+        const foundCampaign = await withDbRetry(() =>
+          this.db.query.campaigns.findFirst({
+            where: eq(campaigns.id, arg2),
+          })
+        ).catch(() => undefined);
+
+        if (foundCampaign) {
+          tenantId = foundCampaign.tenantId;
+        }
       }
-    } else if (!arg1 && arg2) {
-      campaignId = arg2;
-      const foundCampaign = await withDbRetry(() =>
-        this.db.query.campaigns.findFirst({
-          where: eq(campaigns.id, arg2),
-        })
-      ).catch(() => undefined);
 
-      if (foundCampaign) {
-        tenantId = foundCampaign.tenantId;
-      }
-    }
+      const errors: string[] = [];
+      let prospectsScanned = 0;
+      let draftsBackfilled = 0;
 
-    const errors: string[] = [];
-    let prospectsScanned = 0;
-    let draftsBackfilled = 0;
+      const MAX_SCANS_PER_COMPANY_PER_CYCLE = 2;
+      let rawProspects: Array<{ id: string; tenantId: string }> = [];
 
-    let targetProspects: Array<{ id: string; tenantId: string }> = [];
-
-    if (campaignId) {
-      const enrollments = await withDbRetry(() =>
-        this.db.query.campaignEnrollments.findMany({
-          where: eq(campaignEnrollments.campaignId, campaignId),
-        })
-      );
-      for (const e of enrollments) {
-        const p = await withDbRetry(() =>
-          this.db.query.prospects.findFirst({
-            where: eq(prospects.id, e.prospectId),
+      if (campaignId) {
+        const enrollments = await withDbRetry(() =>
+          this.db.query.campaignEnrollments.findMany({
+            where: eq(campaignEnrollments.campaignId, campaignId),
           })
         );
-        if (p && ['READY_FOR_CAMPAIGN', 'APPROVED_FOR_OUTREACH'].includes(p.currentStage)) {
-          if (!tenantId || p.tenantId === tenantId) {
-            targetProspects.push({ id: p.id, tenantId: p.tenantId });
+        for (const e of enrollments) {
+          const p = await withDbRetry(() =>
+            this.db.query.prospects.findFirst({
+              where: eq(prospects.id, e.prospectId),
+            })
+          );
+          if (p && ['READY_FOR_CAMPAIGN', 'APPROVED_FOR_OUTREACH'].includes(p.currentStage)) {
+            if (!tenantId || p.tenantId === tenantId) {
+              rawProspects.push({ id: p.id, tenantId: p.tenantId });
+            }
           }
         }
+      } else {
+        const readyProspects = await withDbRetry(() =>
+          this.db.query.prospects.findMany({
+            where: and(
+              eq(prospects.tenantId, tenantId),
+              inArray(prospects.currentStage, ['READY_FOR_CAMPAIGN', 'APPROVED_FOR_OUTREACH']),
+            ),
+          })
+        );
+        rawProspects = readyProspects.map((p) => ({ id: p.id, tenantId: p.tenantId }));
       }
-    } else {
-      const readyProspects = await withDbRetry(() =>
-        this.db.query.prospects.findMany({
-          where: and(
-            eq(prospects.tenantId, tenantId),
-            inArray(prospects.currentStage, ['READY_FOR_CAMPAIGN', 'APPROVED_FOR_OUTREACH']),
-          ),
+
+      const scoredProspects = await Promise.all(
+        rawProspects.map(async (p) => {
+          const latestEval = await withDbRetry(() =>
+            this.db.query.icpEvaluations.findFirst({
+              where: eq(icpEvaluations.prospectId, p.id),
+              orderBy: [desc(icpEvaluations.createdAt)],
+            })
+          ).catch(() => null);
+          const score = latestEval?.score ?? 0;
+          return { ...p, icpScore: score };
         })
       );
-      targetProspects = readyProspects.map((p) => ({ id: p.id, tenantId: p.tenantId }));
-    }
+      scoredProspects.sort((a, b) => b.icpScore - a.icpScore);
 
-    for (const p of targetProspects) {
-      try {
-        const scanRes = await this.scanProspect(p.tenantId, p.id);
-        prospectsScanned++;
-        if (scanRes.errors && scanRes.errors.length > 0) {
-          errors.push(...scanRes.errors);
+      const companyEngagementCount = new Map<string, number>();
+      const targetProspects = scoredProspects.filter((p) => {
+        const companyKey = `__company__${p.id.slice(0, 8)}`;
+        const currentCount = companyEngagementCount.get(companyKey) ?? 0;
+        if (currentCount >= MAX_SCANS_PER_COMPANY_PER_CYCLE) {
+          return false;
         }
+        companyEngagementCount.set(companyKey, currentCount + 1);
+        return true;
+      });
 
-        const reconcileRes = await this.reconcileMissingDrafts(p.tenantId, p.id);
-        draftsBackfilled += (reconcileRes.backfilledComments + reconcileRes.backfilledLikes);
-      } catch (err: any) {
-        errors.push(`Prospect ${p.id} resume failed: ${err.message}`);
+      console.log(
+        `[ScanResume] Prioritized ${targetProspects.length}/${rawProspects.length} prospects ` +
+        `(by ICP score, anti-cluster cap=${MAX_SCANS_PER_COMPANY_PER_CYCLE})`,
+      );
+
+      for (const p of targetProspects) {
+        try {
+          const scanRes = await this.scanProspect(p.tenantId, p.id);
+          prospectsScanned++;
+          if (scanRes.errors && scanRes.errors.length > 0) {
+            errors.push(...scanRes.errors);
+          }
+
+          const reconcileRes = await this.reconcileMissingDrafts(p.tenantId, p.id);
+          draftsBackfilled += (reconcileRes.backfilledComments + reconcileRes.backfilledLikes);
+        } catch (err: any) {
+          errors.push(`Prospect ${p.id} resume failed: ${err.message}`);
+        }
       }
-    }
 
-    return {
-      status: 'completed',
-      prospectsScanned,
-      draftsBackfilled,
-      errors,
-    };
+      return {
+        status: 'completed',
+        prospectsScanned,
+        draftsBackfilled,
+        errors,
+      };
+    } finally {
+      this.activeScans = Math.max(0, this.activeScans - 1);
+    }
   }
 
   async createLikeRecommendation(tenantId: string, prospectId: string, postId: string): Promise<EngagementDraft> {

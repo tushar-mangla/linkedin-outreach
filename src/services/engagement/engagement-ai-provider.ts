@@ -17,5 +17,5 @@ export interface GenerateCommentInput {
 export interface EngagementAIProvider {
   generateComment(input: GenerateCommentInput): Promise<CommentDraft>;
   selectBestPosts?(posts: { postText: string; authorName: string }[], maxCount?: number): Promise<number[]>;
-  readonly providerName: 'luna' | 'fake';
+  readonly providerName: 'luna' | 'gemini' | 'fake';
 }

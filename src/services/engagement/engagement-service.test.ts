@@ -29,7 +29,7 @@ function buildService(): EngagementService {
     sourceType: 'PLAYWRIGHT',
     findRecentPosts: async () => [
       {
-        postUrl: 'https://linkedin.com/posts/test-1',
+        postUrl: 'https://www.linkedin.com/feed/update/urn:li:activity:7123456789012345678/?trk=feed',
         postText: 'We need to understand artificial intelligence scaling laws better to succeed with data-driven hiring approaches this year.',
         authorName: 'Test Author',
         publishedAtDate: new Date(),
@@ -345,7 +345,8 @@ describe('engagement-service approvals and manual completion', () => {
   it('invalidates only the edited draft approval (scoped invalidation)', async () => {
     const service = buildService();
     const postHash = 'a'.repeat(64);
-    const { post } = await createProspectWithPost(postHash, `https://fixture.test/scoped-${randomUUID()}`);
+    const postUrlScoped = `https://www.linkedin.com/feed/update/urn:li:activity:${Math.floor(9000000000000000000 + Math.random() * 999999999999)}/?trk=feed`;
+    const { post } = await createProspectWithPost(postHash, postUrlScoped);
     const draftA = await createDraft(post.id, post.prospectId);
     const draftB = await createDraft(post.id, post.prospectId);
 
@@ -418,7 +419,8 @@ describe('engagement-service approvals and manual completion', () => {
   ] as const)('manual completion $outcome transitions the linked action and owned slot to $actionStatus', async ({ outcome, outcomeLabel, actionStatus }) => {
     const service = buildService();
     const postHash = 'b'.repeat(64);
-    const { post } = await createProspectWithPost(postHash, `https://fixture.test/manual-${randomUUID()}`);
+    const postUrl = `https://www.linkedin.com/feed/update/urn:li:activity:${Math.floor(9000000000000000000 + Math.random() * 999999999999)}/?trk=feed`;
+    const { post } = await createProspectWithPost(postHash, postUrl);
 
     const [action] = await testDb
       .insert(schema.scheduledActions)
@@ -585,5 +587,135 @@ describe('engagement-service approvals and manual completion', () => {
       expect(result.status).toBe('completed');
       expect(result.prospectsScanned).toBeGreaterThanOrEqual(1);
     });
+  });
+});
+
+describe('post integrity remediation (no synthetic posts, URL gate)', () => {
+  it('requestAction refuses a post with an invalid LinkedIn post URL via POST_NOT_ELIGIBLE and inserts nothing', async () => {
+    const postHash = 'd'.repeat(64);
+    const invalidPostUrl = 'https://www.linkedin.com/in/prospect-xyz/recent-activity/all/#post-0';
+    const { post } = await createProspectWithPost(postHash, invalidPostUrl);
+    const draft = await createDraft(post.id, post.prospectId);
+    const service = buildService();
+    await service.applyReviewDecision({ draftId: draft.id, tenantId: TENANT_ID, decision: 'APPROVED', operatorId: OPERATOR_ID });
+    await testDb.insert(schema.engagementControls).values({ tenantId: TENANT_ID, accountId: ACCOUNT_ID, actionType: 'COMMENT', enabled: true }).onConflictDoNothing();
+    await testDb.insert(schema.browserAccounts).values({ id: ACCOUNT_ID, tenantId: TENANT_ID, label: 'test', health: 'HEALTHY', sessionExpiresAt: new Date(Date.now() + 60_000) }).onConflictDoNothing();
+    const budgetDate = new Date(); budgetDate.setHours(0, 0, 0, 0);
+    await testDb.insert(schema.dailyActionBudgets).values({ tenantId: TENANT_ID, accountId: ACCOUNT_ID, actionType: 'COMMENT', budgetDate, limit: 10 }).onConflictDoNothing();
+
+    await expect(service.requestAction({
+      draftId: draft.id,
+      tenantId: TENANT_ID,
+      accountId: ACCOUNT_ID,
+      actionType: 'COMMENT',
+      mode: 'SIMULATE',
+      idempotencyKey: 'invalid-post-url',
+    })).rejects.toThrow('POST_NOT_ELIGIBLE');
+
+    // Nothing may enter scheduled_actions for this prospect
+    const actions = await testDb.query.scheduledActions.findMany({
+      where: eq(schema.scheduledActions.prospectId, post.prospectId),
+    });
+    expect(actions).toHaveLength(0);
+    // No comment slot may be claimed for the invalid post's canonical identity
+    const slots = await testDb.query.accountPostComments.findMany({
+      where: eq(schema.accountPostComments.canonicalPostIdentifier, post.canonicalPostIdentifier),
+    });
+    expect(slots).toHaveLength(0);
+  });
+
+  it('scanProspect with zero raw posts creates zero drafts and no placeholder post text', async () => {
+    const [prospect] = await testDb
+      .insert(schema.prospects)
+      .values({
+        id: randomUUID(),
+        tenantId: TENANT_ID,
+        linkedinUrl: `https://linkedin.com/in/prospect-${randomUUID()}`,
+        normalizedLinkedinUrl: `https://linkedin.com/in/prospect-${randomUUID()}`,
+        currentStage: 'READY_FOR_CAMPAIGN',
+      })
+      .returning();
+
+    const service = new EngagementService({
+      postSource: {
+        sourceType: 'PLAYWRIGHT',
+        findRecentPosts: async () => [],
+      },
+      aiProvider: {
+        providerName: 'fake',
+        generateComment: async () => ({ commentText: 'unused', groundingEvidence: 'unused' }),
+      },
+    });
+
+    const result = await service.scanProspect(TENANT_ID, prospect.id);
+    expect(result.postsFound).toBe(0);
+    expect(result.draftsCreated).toBe(0);
+    expect(result.postsFiltered).toBe(0);
+
+    // No fabricated post rows and no drafts may exist for this prospect
+    const posts = await testDb.query.engagementPosts.findMany({
+      where: eq(schema.engagementPosts.prospectId, prospect.id),
+    });
+    expect(posts).toHaveLength(0);
+    const drafts = await testDb.query.engagementDrafts.findMany({
+      where: eq(schema.engagementDrafts.prospectId, prospect.id),
+    });
+    expect(drafts).toHaveLength(0);
+    // No synthetic #post-N URL may be fabricated for this prospect
+    const prospectPosts = await testDb.query.engagementPosts.findMany({
+      where: eq(schema.engagementPosts.prospectId, prospect.id),
+    });
+    expect(prospectPosts.some((p) => p.postUrl.includes('#post-'))).toBe(false);
+  });
+
+  it('scanProspect filters out raw posts with invalid LinkedIn post URLs and increments postsFiltered', async () => {
+    const [prospect] = await testDb
+      .insert(schema.prospects)
+      .values({
+        id: randomUUID(),
+        tenantId: TENANT_ID,
+        linkedinUrl: `https://linkedin.com/in/prospect-${randomUUID()}`,
+        normalizedLinkedinUrl: `https://linkedin.com/in/prospect-${randomUUID()}`,
+        currentStage: 'READY_FOR_CAMPAIGN',
+      })
+      .returning();
+
+    const service = new EngagementService({
+      postSource: {
+        sourceType: 'PLAYWRIGHT',
+        findRecentPosts: async () => [
+          {
+            postUrl: 'https://linkedin.com/in/prospect/recent-activity/all/#post-0',
+            postText: 'This is a synthetic or invalid post URL',
+            authorName: 'Prospect Author',
+            publishedAt: new Date(),
+          },
+          {
+            postUrl: 'https://fixture.test/posts/fake-post',
+            postText: 'Another post with a non-LinkedIn domain',
+            authorName: 'Prospect Author',
+            publishedAt: new Date(),
+          },
+        ],
+      },
+      aiProvider: {
+        providerName: 'fake',
+        generateComment: async () => ({ commentText: 'unused', groundingEvidence: 'unused' }),
+      },
+    });
+
+    const result = await service.scanProspect(TENANT_ID, prospect.id);
+    expect(result.postsFound).toBe(2);
+    expect(result.postsFiltered).toBe(2);
+    expect(result.draftsCreated).toBe(0);
+
+    const posts = await testDb.query.engagementPosts.findMany({
+      where: eq(schema.engagementPosts.prospectId, prospect.id),
+    });
+    expect(posts).toHaveLength(0);
+    const drafts = await testDb.query.engagementDrafts.findMany({
+      where: eq(schema.engagementDrafts.prospectId, prospect.id),
+    });
+    expect(drafts).toHaveLength(0);
   });
 });

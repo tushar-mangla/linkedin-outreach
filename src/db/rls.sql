@@ -19,6 +19,7 @@ ALTER TABLE manual_tasks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE engagement_controls ENABLE ROW LEVEL SECURITY;
 ALTER TABLE browser_accounts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE execution_evidence ENABLE ROW LEVEL SECURITY;
+ALTER TABLE engagement_target_sources ENABLE ROW LEVEL SECURITY;
 
 -- Create a policy that filters based on the current tenant_id
 CREATE POLICY tenant_isolation_policy ON prospects
@@ -55,7 +56,8 @@ BEGIN
     'scheduled_actions',
     'engagement_posts', 'engagement_drafts', 'engagement_history',
     'recommendation_revisions', 'recommendation_approvals', 'manual_tasks',
-    'engagement_controls', 'browser_accounts', 'execution_evidence'
+    'engagement_controls', 'browser_accounts', 'execution_evidence',
+    'engagement_target_sources'
   ] LOOP
     EXECUTE format('CREATE POLICY tenant_isolation_policy ON %I FOR ALL USING (tenant_id = current_setting(''app.current_tenant_id'', true)::uuid) WITH CHECK (tenant_id = current_setting(''app.current_tenant_id'', true)::uuid)', table_name);
   END LOOP;
@@ -81,3 +83,4 @@ ALTER TABLE manual_tasks FORCE ROW LEVEL SECURITY;
 ALTER TABLE engagement_controls FORCE ROW LEVEL SECURITY;
 ALTER TABLE browser_accounts FORCE ROW LEVEL SECURITY;
 ALTER TABLE execution_evidence FORCE ROW LEVEL SECURITY;
+ALTER TABLE engagement_target_sources FORCE ROW LEVEL SECURITY;

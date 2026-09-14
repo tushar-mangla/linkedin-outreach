@@ -36,51 +36,36 @@ export class PostFilter {
     const rejected: FilterResult['rejected'] = [];
     const cutoff = new Date(Date.now() - this.maxAgeDays * 24 * 60 * 60 * 1000);
 
-    // 1. First pass: filter out by text length and keywords
-    const contentValidPosts = [];
+    const validPosts: RawPost[] = [];
     for (const post of posts) {
-      const reason = this.rejectContentReason(post);
+      const reason = this.rejectReason(post, cutoff);
       if (reason) {
         rejected.push({ post, reason });
       } else {
-        contentValidPosts.push(post);
+        validPosts.push(post);
       }
     }
 
-    // 2. Separate into recent vs older (assuming they are already ordered newest-first)
-    const recentPosts = [];
-    const olderPosts = [];
-    
-    for (const post of contentValidPosts) {
-      if (post.publishedAt && post.publishedAt < cutoff) {
-        olderPosts.push(post);
-      } else {
-        recentPosts.push(post);
-      }
-    }
+    // Rank valid posts by engagement score descending
+    validPosts.sort((a, b) => this.getEngagementScore(b) - this.getEngagementScore(a));
 
-    // 3. Apply the selection rule:
-    // - If we have recent posts, keep up to 1 of them.
-    // - If we have no recent posts, keep exactly 1 older post (the latest one).
-    if (recentPosts.length > 0) {
-      kept.push(...recentPosts.slice(0, 1));
-      
-      // Reject the rest
-      for (const post of recentPosts.slice(1)) {
-        rejected.push({ post, reason: 'Exceeded maximum of 1 recent post' });
-      }
-      for (const post of olderPosts) {
-        rejected.push({ post, reason: `Post is older than ${this.maxAgeDays} days (and recent posts exist)` });
-      }
-    } else if (olderPosts.length > 0) {
-      kept.push(olderPosts[0]);
-      
-      for (const post of olderPosts.slice(1)) {
-        rejected.push({ post, reason: 'Fallback to latest 1 older post already satisfied' });
+    // Keep the top post if available
+    if (validPosts.length > 0) {
+      kept.push(validPosts[0]);
+      for (const post of validPosts.slice(1)) {
+        rejected.push({ post, reason: 'Exceeded maximum of 1 kept post' });
       }
     }
 
     return { kept, rejected };
+  }
+
+  private rejectReason(post: RawPost, cutoff: Date): string | null {
+    if (post.publishedAt && post.publishedAt < cutoff) {
+      return `Post is older than ${this.maxAgeDays} days`;
+    }
+
+    return this.rejectContentReason(post);
   }
 
   private rejectContentReason(post: RawPost): string | null {
@@ -99,5 +84,16 @@ export class PostFilter {
     }
 
     return null;
+  }
+
+  private getEngagementScore(post: RawPost): number {
+    const p = post as any;
+    if (typeof p.engagementScore === 'number') {
+      return p.engagementScore;
+    }
+    const likes = p.likesCount ?? p.likes ?? p.reactionsCount ?? 0;
+    const comments = p.commentsCount ?? p.comments ?? 0;
+    const shares = p.sharesCount ?? p.repostsCount ?? p.shares ?? 0;
+    return likes + comments * 2 + shares * 3;
   }
 }

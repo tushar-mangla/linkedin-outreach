@@ -66,6 +66,17 @@ export class ActionQueueService {
       }
     }
 
+    // Resume any PAUSED_BUDGET actions whose scheduled_for has passed (next budget window)
+    if (this.db.resumePausedActions) {
+      try {
+        await this.db.resumePausedActions(tenantId);
+      } catch (err) {
+        if (!isTransientDbError(err)) {
+          console.warn('[ActionQueueService] resumePausedActions warning:', (err as Error).message);
+        }
+      }
+    }
+
     // 1. Check Lease Guard
     if (leaseToken) {
       const activeLease = await this.leaseService.getActiveLease(tenantId, accountId);
@@ -131,8 +142,14 @@ export class ActionQueueService {
       );
 
       if (!reservationId) {
-        // Out of daily quota: revert claim back to PENDING for subsequent window
-        await this.db.updateScheduledActionResult(tenantId, action.id, { status: 'PENDING', errorCode: 'BUDGET_EXCEEDED' });
+        // Out of daily quota: pause until next budget window (local midnight); do not re-claim in this cycle
+        const nextWindow = new Date();
+        nextWindow.setHours(24, 0, 0, 0);
+        await this.db.updateScheduledActionResult(tenantId, action.id, {
+          status: 'PAUSED_BUDGET',
+          errorCode: 'BUDGET_EXCEEDED',
+          scheduledFor: nextWindow,
+        });
         await this.logger.record({
           action: 'action.budget_exceeded',
           actor: workerId,
@@ -225,14 +242,40 @@ export class ActionQueueService {
         return { processed: true, action, result };
       } else {
         await this.budgetService.releaseBudget(reservationId);
-         if (result.errorCode === 'MANUAL_CONFIRMATION_PENDING') {
-           await this.db.createManualTask({ tenantId, scheduledActionId: action.id, actionType: action.actionType.toUpperCase() as 'LIKE' | 'COMMENT' });
-           // Keep the action CLAIMED (non-claimable) until the manual task resolves it.
-           // Resetting to PENDING here would allow a second worker to re-claim it.
-            await this.db.updateScheduledActionResult(tenantId, action.id, { status: 'CLAIMED', outcomeLabel: result.outcomeLabel, errorCode: result.errorCode });
-         } else {
-            await this.db.finalizeCommentAction(tenantId, action.id, { status: 'FAILED', outcomeLabel: result.outcomeLabel, errorCode: result.errorCode });
-         }
+        if (result.errorCode === 'MANUAL_CONFIRMATION_PENDING') {
+          await this.db.createManualTask({ tenantId, scheduledActionId: action.id, actionType: action.actionType.toUpperCase() as 'LIKE' | 'COMMENT' });
+          // Keep the action CLAIMED (non-claimable) until the manual task resolves it.
+          // Resetting to PENDING here would allow a second worker to re-claim it.
+          await this.db.updateScheduledActionResult(tenantId, action.id, { status: 'CLAIMED', outcomeLabel: result.outcomeLabel, errorCode: result.errorCode });
+        } else {
+          const execErrorCode = result.errorCode || 'EXECUTION_FAILED';
+          const RETRYABLE_EXECUTION_ERROR_CODES = ['SELECTOR_MISMATCH', 'RATE_LIMITED', 'EXECUTION_TIMEOUT'];
+          const isRetryable = RETRYABLE_EXECUTION_ERROR_CODES.includes(execErrorCode);
+          const currentAttempt = action.attemptCount ?? 0;
+          const nextAttempt = currentAttempt + 1;
+          if (isRetryable && nextAttempt < 3) {
+            const backoffMs = 5 * 60 * 1000;
+            const nextScheduledFor = new Date(Date.now() + backoffMs);
+            await this.db.updateScheduledActionResult(tenantId, action.id, {
+              status: 'PENDING',
+              errorCode: execErrorCode,
+              attemptCount: nextAttempt,
+              scheduledFor: nextScheduledFor,
+            });
+            await this.logger.record({
+              action: `action.${action.actionType}.retry`,
+              actor: workerId,
+              tenantId,
+              entityType: 'scheduled_action',
+              entityId: action.id,
+              details: redactForAudit({ attempt: nextAttempt, errorCode: execErrorCode, claimToken }),
+            });
+            return { processed: true, action, result, reason: 'RETRY_SCHEDULED' };
+          } else {
+            // Non-retryable (incl. safety refusals like COOLDOWN_ACTIVE that reach here) or ceiling reached → dead-letter
+            await this.db.finalizeCommentAction(tenantId, action.id, { status: 'FAILED', outcomeLabel: result.outcomeLabel, errorCode: execErrorCode });
+          }
+        }
         await this.logger.record({
           action: `action.${action.actionType}.failed`,
           actor: workerId,

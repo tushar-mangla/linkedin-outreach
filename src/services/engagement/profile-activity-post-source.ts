@@ -56,7 +56,12 @@ export class ProfileActivityPostSource implements ProspectPostSource {
 
       const rawUrl = typeof item.url === 'string' && item.url.startsWith('http')
         ? item.url
-        : `${profileUrl.replace(/\/?$/, '')}/recent-activity/all/#post-${i}`;
+        : null;
+
+      if (!rawUrl) {
+        // Discard items without a verifiable real post URL (no synthetic #post-N)
+        continue;
+      }
 
       const authorName = typeof item.author === 'string' && item.author.trim()
         ? item.author.trim()

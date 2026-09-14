@@ -174,7 +174,7 @@ export type ScheduledAction = {
   actionType: 'visit' | 'like' | 'comment' | 'connection' | 'message' | 'replyCheck';
   payload?: Record<string, unknown>;
   scheduledFor: Date;
-  status: 'PENDING' | 'CLAIMED' | 'COMPLETED' | 'FAILED' | 'UNCERTAIN';
+  status: 'PENDING' | 'CLAIMED' | 'COMPLETED' | 'FAILED' | 'UNCERTAIN' | 'PAUSED_BUDGET';
   idempotencyKey: string;
   claimToken?: string | null;
   revisionId?: string;
@@ -187,11 +187,12 @@ export type ScheduledAction = {
   completedAt?: Date;
   createdAt: Date;
   updatedAt: Date;
+  attemptCount?: number;
 };
 
 // ─── Feature 2: Engagement ───────────────────────────────────────────────────
 
-export type PostSourceType = 'PLAYWRIGHT' | 'FIXTURE' | 'MANUAL';
+export type PostSourceType = 'PLAYWRIGHT' | 'FIXTURE' | 'MANUAL' | 'POST_KEYWORD_SEARCH';
 
 export type LinkedInPost = {
   id: string;
@@ -225,7 +226,7 @@ export type EngagementDraft = {
   commentText: string;
   editedText?: string;
   status: DraftStatus;
-  provider: 'luna' | 'fake';
+  provider: 'luna' | 'gemini' | 'fake';
   providerMetadata?: Record<string, unknown>;
   validationReport?: Record<string, unknown>;
   createdAt: Date;
@@ -253,4 +254,77 @@ export type ManualTask = {
   confirmationMetadata?: Record<string, unknown>;
   createdAt: Date;
   completedAt?: Date;
+};
+
+// ─── Channel 4: Prospect discovery (buying signals, market insights, query stats) ──
+
+export type ProspectBuyingSignalCategory =
+  | 'BD_PIPELINE_FEAST_FAMINE'
+  | 'COLD_OUTREACH_FATIGUE'
+  | 'CONTINGENCY_VS_RETAINER'
+  | 'FEE_EROSION'
+  | 'CLIENT_GHOSTING'
+  | 'TIRED_OF_COLD_CALLING'
+  | 'MANUAL_SOURCING_FATIGUE'
+  | 'CANDIDATE_GHOSTING'
+  | 'ATS_LIMITATIONS'
+  | 'OTHER';
+
+export type ProspectBuyingSignalUrgency = 'HIGH' | 'MEDIUM' | 'LOW';
+
+export type ProspectArchetype = 'AGENCY_LEADERSHIP' | 'HIRING_LEADER';
+
+export type ProspectBuyingSignal = {
+  id: string;
+  prospectId: string;
+  postId: string | null;
+  tenantId: string;
+  archetype: ProspectArchetype;
+  signalCategory: ProspectBuyingSignalCategory;
+  signalScore: number;
+  urgency: ProspectBuyingSignalUrgency;
+  extractedEmails: string[] | null;
+  extractedLinks: string[] | null;
+  whatTheyNeed: string | null;
+  evidenceQuote: string | null;
+  createdAt: Date;
+};
+
+export type MarketContentInsight = {
+  id: string;
+  tenantId: string;
+  sourcePostId: string | null;
+  authorProfileUrl: string;
+  category: string;
+  rawVerbatimQuote: string;
+  emotionalSentiment: string | null;
+  suggestedContentHook: string | null;
+  toolsMentioned: string[] | null;
+  createdAt: Date;
+};
+
+export type DiscoveryQueryStat = {
+  id: string;
+  tenantId: string;
+  query: string;
+  postsFound: number;
+  signalsDetected: number;
+  prospectsPromoted: number;
+  lastSearchedAt: Date;
+};
+
+// ─── Channel 5: Competitor & influencer post-engager sourcing ───────────────
+
+export type EngagerTargetType = 'COMPETITOR' | 'INFLUENCER';
+
+export type EngagerTarget = {
+  id: string;
+  tenantId: string;
+  targetType: EngagerTargetType;
+  displayName: string;
+  linkedinUrl: string;
+  normalizedUrl: string;
+  isActive: boolean;
+  createdAt: Date;
+  updatedAt: Date;
 };

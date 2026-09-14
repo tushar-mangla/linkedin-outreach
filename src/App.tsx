@@ -4,6 +4,7 @@ import { RolesPanel } from './components/RolesPanel';
 import { UploadPanel } from './components/UploadPanel';
 import { EngagementPanel } from './components/EngagementPanel';
 import { ExportPanel } from './components/ExportPanel';
+import { DiscoveryPanel } from './components/DiscoveryPanel';
 
 export interface RoleDef {
   id?: string;
@@ -23,7 +24,7 @@ export interface ProspectRow {
 }
 
 export function App() {
-  const [activeTab, setActiveTab] = useState<'roles' | 'upload' | 'pipeline' | 'export' | 'engagement'>('pipeline');
+  const [activeTab, setActiveTab] = useState<'roles' | 'discovery' | 'pipeline' | 'export' | 'engagement'>('discovery');
   const [roleName, setRoleName] = useState('Staff Backend Engineer');
   const [criteriaJson, setCriteriaJson] = useState(
     JSON.stringify(
@@ -278,8 +279,8 @@ export function App() {
   };
 
   // Drains the entire queue one action at a time with a gap between each.
-  // 180s gap is required to avoid LinkedIn rate-limiting.
-  const handleDrainQueue = async (gapMs = 180_000) => {
+  // 300s gap is required to avoid LinkedIn rate-limiting.
+  const handleDrainQueue = async (gapMs = 300_000) => {
     let processed = 0;
     try {
       while (true) {
@@ -501,7 +502,9 @@ export function App() {
   const rejectedCount = prospects.filter(
     c => c.currentStage === 'REJECTED' || c.currentStage === 'FILTERED_OUT'
   ).length;
-  const readyProspects = prospects.filter(c => c.currentStage === 'READY_FOR_CAMPAIGN');
+  const pendingQueueActions = queueActions.filter((a) => a.status === 'PENDING');
+  const pendingDrafts = drafts.filter((d) => d.status === 'PENDING' || d.status === 'APPROVED');
+  const readyProspects = prospects.filter((c) => c.currentStage === 'READY_FOR_CAMPAIGN' || c.currentStage === 'APPROVED_FOR_OUTREACH');
 
   return (
     <div className="app-shell">
@@ -519,10 +522,10 @@ export function App() {
             📋 Job Roles & Criteria
           </button>
           <button
-            className={`nav-item ${activeTab === 'upload' ? 'active' : ''}`}
-            onClick={() => setActiveTab('upload')}
+            className={`nav-item ${activeTab === 'discovery' ? 'active' : ''}`}
+            onClick={() => setActiveTab('discovery')}
           >
-            📥 Import Prospects
+            🚀 Lead Discovery Hub
           </button>
           <button
             className={`nav-item ${activeTab === 'pipeline' ? 'active' : ''}`}
@@ -531,16 +534,31 @@ export function App() {
             📊 Prospect Pipeline
           </button>
           <button
+            className={`nav-item ${activeTab === 'engagement' ? 'active' : ''}`}
+            onClick={() => setActiveTab('engagement')}
+            style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+          >
+            <span>💬 Engagement Queue</span>
+            {pendingQueueActions.length > 0 && (
+              <span
+                style={{
+                  background: '#d9f26a',
+                  color: '#18342e',
+                  fontSize: '11px',
+                  fontWeight: 800,
+                  padding: '2px 7px',
+                  borderRadius: '10px',
+                }}
+              >
+                {pendingQueueActions.length}
+              </span>
+            )}
+          </button>
+          <button
             className={`nav-item ${activeTab === 'export' ? 'active' : ''}`}
             onClick={() => setActiveTab('export')}
           >
             📤 Outreach & Export
-          </button>
-          <button
-            className={`nav-item ${activeTab === 'engagement' ? 'active' : ''}`}
-            onClick={() => setActiveTab('engagement')}
-          >
-            💬 Engagement Queue
           </button>
         </nav>
         <div className="sidebar-note">
@@ -563,24 +581,26 @@ export function App() {
         {/* METRICS ROW */}
         <div className="metric-grid">
           <div className="metric">
-            <span>TOTAL INGESTED</span>
+            <span>TOTAL PROSPECTS</span>
             <strong>{prospects.length}</strong>
-            <small>Prospects Processed</small>
+            <small>{qualifiedCount} Qualified for Campaign</small>
           </div>
           <div className="metric">
-            <span>QUALIFIED / READY</span>
-            <strong>{qualifiedCount}</strong>
-            <small>Approved for Outreach</small>
+            <span>QUEUE ACTIONS</span>
+            <strong style={{ color: pendingQueueActions.length > 0 ? '#2e7d32' : '#17211f' }}>
+              {pendingQueueActions.length}
+            </strong>
+            <small>{pendingQueueActions.length > 0 ? '⚡ Auto-draining (5m gap)' : 'Idle (0 in queue)'}</small>
+          </div>
+          <div className="metric">
+            <span>DRAFTS POOL</span>
+            <strong>{pendingDrafts.length}</strong>
+            <small>Comments & Likes Ready</small>
           </div>
           <div className="metric">
             <span>CAMPAIGNS</span>
             <strong>{campaignsList.length}</strong>
             <small>Discovery Runs</small>
-          </div>
-          <div className="metric">
-            <span>DISQUALIFIED</span>
-            <strong>{rejectedCount}</strong>
-            <small>Filtered & Excluded</small>
           </div>
         </div>
 
@@ -595,9 +615,9 @@ export function App() {
           />
         )}
 
-        {/* TAB CONTENT: UPLOAD */}
-        {activeTab === 'upload' && (
-          <UploadPanel
+        {/* TAB CONTENT: UNIFIED DISCOVERY HUB */}
+        {activeTab === 'discovery' && (
+          <DiscoveryPanel
             roleName={roleName}
             criteriaJson={criteriaJson}
             setStatusMessage={setStatusMessage}
@@ -605,9 +625,11 @@ export function App() {
             refreshCampaigns={refreshCampaigns}
             setSelectedCampaignId={setSelectedCampaignId}
             setActiveTab={setActiveTab}
+            queueActions={queueActions}
+            drafts={drafts}
+            prospects={prospects}
           />
         )}
-
 
         {/* TAB CONTENT: PIPELINE */}
         {activeTab === 'pipeline' && (
@@ -631,8 +653,6 @@ export function App() {
             onSkipCommentWithLike={handleSkipCommentWithLike}
           />
         )}
-
-
 
         {/* TAB CONTENT: EXPORT */}
         {activeTab === 'export' && <ExportPanel />}

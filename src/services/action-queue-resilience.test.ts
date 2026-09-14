@@ -11,13 +11,13 @@ const accountId = '00000000-0000-0000-0000-000000000002';
 const prospectId = '00000000-0000-0000-0000-000000000003';
 const postHash = 'b'.repeat(64);
 
-function makeAction(actionType: 'like' | 'comment', key: string) {
+function makeAction(actionType: 'like' | 'comment', key: string, postUrl = `https://fixture.test/${actionType}`) {
   return {
     tenantId,
     prospectId,
     accountId,
     actionType,
-    payload: { postUrl: `https://fixture.test/${actionType}`, comment: 'Grounded comment' },
+    payload: { postUrl, comment: 'Grounded comment' },
     scheduledFor: new Date(Date.now() - 1_000),
     idempotencyKey: key,
     revisionId: `revision-${actionType}`,
@@ -257,5 +257,181 @@ describe('ActionQueueService Resilience', () => {
 
     const actionInDb = storage.getTable('scheduledActions').find((a) => a.id === actionId);
     expect(actionInDb?.status).toBe('CLAIMED');
+  });
+});
+
+describe('ActionQueueService budget pause & retry ceiling (post-integrity remediation)', () => {
+  it('pauses budget-exceeded actions as PAUSED_BUDGET (not PENDING) and does not re-claim them', async () => {
+    const storage = new MemoryStorage();
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    storage.getTable('dailyActionBudgets').push({
+      id: 'budget-like-zero', tenantId, accountId, actionType: 'like', budgetDate: today,
+      limit: 0, reservedCount: 0, completedCount: 0, createdAt: today, updatedAt: today,
+    });
+    const lease = new LeaseService(storage);
+    const token = await lease.acquireLeaseWithToken(tenantId, accountId, 'worker', 60);
+    const queue = new ActionQueueService({
+      db: storage, leaseService: lease, budgetService: new BudgetService(storage),
+      executor: new FakeExecutor(),
+      resolveSafety: async (scheduled) => makeSafety('LIKE', scheduled.revisionId!),
+    });
+
+    const scheduled = await queue.scheduleAction(makeAction('like', 'budget-paused'));
+    const result = await queue.processNextAction(tenantId, accountId, 'worker', token.leaseToken);
+
+    expect(result.reason).toBe('BUDGET_EXCEEDED');
+    const stored = storage.getTable('scheduledActions').find((a) => a.id === scheduled.id)!;
+    expect(stored.status).toBe('PAUSED_BUDGET'); // NOT PENDING → no hot loop
+    expect(stored.errorCode).toBe('BUDGET_EXCEEDED');
+    expect(stored.scheduledFor.getTime()).toBeGreaterThan(Date.now()); // pushed to next window
+    expect(stored.scheduledFor.getHours()).toBe(0); // aligned with local midnight
+    expect(stored.scheduledFor.getMinutes()).toBe(0);
+
+    // Next tick: PAUSED_BUDGET is not claimable
+    const next = await queue.processNextAction(tenantId, accountId, 'worker', token.leaseToken);
+    expect(next.reason).toBe('NO_PENDING_ACTIONS');
+    expect(storage.getTable('scheduledActions').find((a) => a.id === scheduled.id)!.status).toBe('PAUSED_BUDGET');
+  });
+
+  it('resumes a PAUSED_BUDGET action to PENDING once its scheduled_for window passes and completes it', async () => {
+    const storage = new MemoryStorage();
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    storage.getTable('dailyActionBudgets').push({
+      id: 'budget-like-resume', tenantId, accountId, actionType: 'like', budgetDate: today,
+      limit: 0, reservedCount: 0, completedCount: 0, createdAt: today, updatedAt: today,
+    });
+    const lease = new LeaseService(storage);
+    const token = await lease.acquireLeaseWithToken(tenantId, accountId, 'worker', 60);
+    const queue = new ActionQueueService({
+      db: storage, leaseService: lease, budgetService: new BudgetService(storage),
+      executor: new FakeExecutor(),
+      resolveSafety: async (scheduled) => makeSafety('LIKE', scheduled.revisionId!),
+    });
+
+    const scheduled = await queue.scheduleAction(makeAction('like', 'budget-resume', 'https://fixture.test/budget-resume'));
+    await queue.processNextAction(tenantId, accountId, 'worker', token.leaseToken);
+    expect(storage.getTable('scheduledActions').find((a) => a.id === scheduled.id)!.status).toBe('PAUSED_BUDGET');
+
+    // New budget window rolls: budget restored and pause window passes
+    const budget = storage.getTable('dailyActionBudgets').find((b) => b.id === 'budget-like-resume')!;
+    budget.limit = 1;
+    const stored = storage.getTable('scheduledActions').find((a) => a.id === scheduled.id)!;
+    stored.scheduledFor = new Date(Date.now() - 1_000);
+
+    const resumed = await queue.processNextAction(tenantId, accountId, 'worker', token.leaseToken);
+    expect(resumed.processed).toBe(true);
+    expect(resumed.result?.outcomeLabel).toBe('simulated');
+    expect(storage.getTable('scheduledActions').find((a) => a.id === scheduled.id)!.status).toBe('COMPLETED');
+  });
+
+  it('resumePausedActions sweeps only mature PAUSED_BUDGET rows back to PENDING', async () => {
+    const storage = new MemoryStorage();
+    const now = new Date();
+    const past = new Date(Date.now() - 1_000);
+    const future = new Date(Date.now() + 60_000);
+    storage.getTable('scheduledActions').push(
+      { id: 'paused-mature', tenantId, accountId, prospectId, actionType: 'like', status: 'PAUSED_BUDGET', scheduledFor: past, errorCode: 'BUDGET_EXCEEDED', idempotencyKey: 'paused-mature', createdAt: now, updatedAt: now },
+      { id: 'paused-immature', tenantId, accountId, prospectId, actionType: 'like', status: 'PAUSED_BUDGET', scheduledFor: future, errorCode: 'BUDGET_EXCEEDED', idempotencyKey: 'paused-immature', createdAt: now, updatedAt: now },
+    );
+
+    const resumed = await storage.resumePausedActions(tenantId);
+    expect(resumed).toBe(1);
+
+    const mature = storage.getTable('scheduledActions').find((a) => a.id === 'paused-mature')!;
+    expect(mature.status).toBe('PENDING');
+    expect(mature.errorCode).toBeUndefined();
+    const immature = storage.getTable('scheduledActions').find((a) => a.id === 'paused-immature')!;
+    expect(immature.status).toBe('PAUSED_BUDGET');
+  });
+
+  it.each(['SELECTOR_MISMATCH', 'RATE_LIMITED', 'EXECUTION_TIMEOUT'])(
+    'retries %s with attemptCount increments up to the ceiling, then dead-letters to FAILED',
+    async (errorCode) => {
+      const storage = new MemoryStorage();
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      storage.getTable('dailyActionBudgets').push({
+        id: 'budget-like-retry', tenantId, accountId, actionType: 'like', budgetDate: today,
+        limit: 5, reservedCount: 0, completedCount: 0, createdAt: today, updatedAt: today,
+      });
+      const lease = new LeaseService(storage);
+      const token = await lease.acquireLeaseWithToken(tenantId, accountId, 'worker', 60);
+      const failingExecutor: any = {
+        likePost: async () => ({ success: false, errorCode, timestamp: new Date().toISOString() }),
+      };
+      const queue = new ActionQueueService({
+        db: storage, leaseService: lease, budgetService: new BudgetService(storage),
+        executor: failingExecutor,
+        resolveSafety: async (scheduled) => makeSafety('LIKE', scheduled.revisionId!),
+      });
+
+      const scheduled = await queue.scheduleAction(makeAction('like', `retry-${errorCode}`));
+
+      // Attempt 1 → retry scheduled with attemptCount 1 and backoff
+      let result = await queue.processNextAction(tenantId, accountId, 'worker', token.leaseToken);
+      expect(result.reason).toBe('RETRY_SCHEDULED');
+      let stored = storage.getTable('scheduledActions').find((a) => a.id === scheduled.id)!;
+      expect(stored.status).toBe('PENDING');
+      expect(stored.attemptCount).toBe(1);
+      expect(stored.errorCode).toBe(errorCode);
+      expect(stored.scheduledFor.getTime()).toBeGreaterThan(Date.now()); // backoff applied
+
+      // Simulate the 5-minute backoff elapsing
+      stored.scheduledFor = new Date(Date.now() - 1_000);
+
+      // Attempt 2 → retry scheduled with attemptCount 2
+      result = await queue.processNextAction(tenantId, accountId, 'worker', token.leaseToken);
+      expect(result.reason).toBe('RETRY_SCHEDULED');
+      stored = storage.getTable('scheduledActions').find((a) => a.id === scheduled.id)!;
+      expect(stored.attemptCount).toBe(2);
+      stored.scheduledFor = new Date(Date.now() - 1_000);
+
+      // Attempt 3 → ceiling reached → dead-letter FAILED
+      result = await queue.processNextAction(tenantId, accountId, 'worker', token.leaseToken);
+      expect(result.reason).toBe('EXECUTION_FAILED');
+      stored = storage.getTable('scheduledActions').find((a) => a.id === scheduled.id)!;
+      expect(stored.status).toBe('FAILED');
+      expect(stored.attemptCount).toBe(2);
+
+      // No further pending work remains (bounded, no infinite loop)
+      const final = await queue.processNextAction(tenantId, accountId, 'worker', token.leaseToken);
+      expect(final.reason).toBe('NO_PENDING_ACTIONS');
+    },
+  );
+
+  it('fails COOLDOWN_ACTIVE directly with 0 retries (fast failure, no attemptCount increment)', async () => {
+    const storage = new MemoryStorage();
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    storage.getTable('dailyActionBudgets').push({
+      id: 'budget-like-cooldown', tenantId, accountId, actionType: 'like', budgetDate: today,
+      limit: 5, reservedCount: 0, completedCount: 0, createdAt: today, updatedAt: today,
+    });
+    // Recent LIKE history → cooldown active for this prospect
+    storage.getTable('engagementHistory').push({
+      id: 'history-cooldown-1', tenantId, prospectId, postId: 'post-1',
+      actionType: 'LIKE', interactedAt: new Date(), operatorId: 'worker',
+    });
+    const lease = new LeaseService(storage);
+    const token = await lease.acquireLeaseWithToken(tenantId, accountId, 'worker', 60);
+    const queue = new ActionQueueService({
+      db: storage, leaseService: lease, budgetService: new BudgetService(storage),
+      executor: new FakeExecutor(),
+      resolveSafety: async (scheduled) => makeSafety('LIKE', scheduled.revisionId!),
+    });
+
+    const scheduled = await queue.scheduleAction(makeAction('like', 'cooldown-fast-fail'));
+    const result = await queue.processNextAction(tenantId, accountId, 'worker', token.leaseToken);
+
+    expect(result.reason).toBe('COOLDOWN_ACTIVE');
+    const stored = storage.getTable('scheduledActions').find((a) => a.id === scheduled.id)!;
+    expect(stored.status).toBe('FAILED');
+    expect(stored.errorCode).toBe('COOLDOWN_ACTIVE');
+    expect(stored.attemptCount ?? 0).toBe(0); // no retries for policy refusals
+
+    const next = await queue.processNextAction(tenantId, accountId, 'worker', token.leaseToken);
+    expect(next.reason).toBe('NO_PENDING_ACTIONS');
   });
 });

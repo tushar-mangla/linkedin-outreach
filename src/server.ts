@@ -13,6 +13,7 @@ import { icpPipeline } from './services/icp/index.js';
 import { tenantContext } from './db/tenant-context.js';
 import { stringify } from 'csv-stringify/sync';
 import { EngagementService } from './services/engagement/engagement-service.js';
+import type { EngagementAIProvider } from './services/engagement/engagement-ai-provider.js';
 
 import { LunaEngagementProvider } from './services/engagement/luna-engagement-provider.js';
 import { ProfileActivityPostSource } from './services/engagement/profile-activity-post-source.js';
@@ -32,6 +33,14 @@ import { ProspectDiscoveryService, discoveryDedupeKey } from './services/discove
 import { GoogleXraySource, XrayBlockedError, XrayNetworkError, XrayRateLimitedError } from './services/discovery/google-xray-source.js';
 import { OpenCliLinkedinSource, OpenCliUnavailableError, OpenCliExecutionError } from './services/discovery/opencli-linkedin-source.js';
 import { DEFAULT_XRAY_NICHES, DEFAULT_XRAY_TITLES } from './services/discovery/xray-query-builder.js';
+import { ContentSearchChannel } from './services/discovery/content-search-channel.js';
+import { BuyingSignalClassifier, FakeBuyingSignalProvider } from './services/discovery/buying-signal-classifier.js';
+import { LunaBuyingSignalProvider } from './services/discovery/luna-buying-signal-provider.js';
+import { OpenCliContentSearchRunner } from './services/discovery/opencli-content-search-runner.js';
+import { OpenCliPostEngagerRunner, type PostRecency } from './services/discovery/opencli-post-engager-runner.js';
+import { EngagerTargetRegistry } from './services/discovery/engager-target-registry.js';
+import { PostEngagerChannel } from './services/discovery/post-engager-channel.js';
+import { promoteProspect } from './services/discovery/promotion-service.js';
 
 const app = express();
 const port = Number(process.env.PORT ?? 3000);
@@ -89,7 +98,18 @@ function handleDbError(
 // Browser discovery is Feature 0.5-only and remains fixture-first by default.
 
 function buildEngagementService(): EngagementService {
-  const aiProvider = new LunaEngagementProvider();
+  const aiProvider: EngagementAIProvider = process.env.GEMINI_API_KEY || process.env.CODEX_EVERYWHERE_API_KEY
+    ? new LunaEngagementProvider()
+    : {
+      providerName: 'fake',
+      async generateComment(input) {
+        return {
+          commentText: `The point about ${input.postText.split(/[.!?]/)[0]?.slice(0, 80) ?? 'this challenge'} is especially relevant.`,
+          groundingEvidence: input.postText.split(/[.!?]/)[0]?.trim() ?? input.postText.slice(0, 80),
+          providerMeta: { provider: 'fake' },
+        };
+      },
+    };
   const postSource = new ProfileActivityPostSource();
 
   return new EngagementService({
@@ -917,6 +937,14 @@ app.post('/api/execution/accounts/:id/stop', async (req, res) => {
 });
 
 app.post('/api/queue/process', async (req, res) => {
+  if (scanResumeRunning || engagementService.isScanningActive) {
+    return res.status(422).json({
+      status: 'refused',
+      code: 'SCANNING_IN_PROGRESS',
+      message: 'Prospect scanning is currently active. Action queue processing is on hold.',
+      correlationId: correlationOf(req),
+    });
+  }
   try {
     const tenantId = tenantOf(req);
     let { accountId, workerId, leaseToken, mode } = req.body ?? {};
@@ -1040,12 +1068,204 @@ app.get('/api/execution/audit', async (req, res) => {
   }
 });
 
+// ─── Channel 4: Post keyword search + AI buying signals ───────────────────────
+
+function buildContentSearchChannel(): { channel: ContentSearchChannel; provider: string } {
+  const adapter = new DrizzleAdapter(db as never);
+  const provider = process.env.GEMINI_API_KEY || process.env.CODEX_EVERYWHERE_API_KEY
+    ? new LunaBuyingSignalProvider()
+    : new FakeBuyingSignalProvider();
+  return { channel: new ContentSearchChannel({
+    runner: new OpenCliContentSearchRunner(),
+    classifier: new BuyingSignalClassifier(provider),
+    db: adapter,
+    generateDrafts: (tenantId, prospectId, postId) =>
+      engagementService.createLikeRecommendation(tenantId, prospectId, postId).then(() => undefined),
+  }), provider: provider.providerName };
+}
+
+app.post('/api/discovery/content-search', async (req, res) => {
+  try {
+    const tenantId = tenantOf(req);
+    const body = req.body ?? {};
+    const queries = Array.isArray(body.queries)
+      ? body.queries.filter((q: unknown): q is string => typeof q === 'string' && q.trim().length > 0).map((q: string) => q.trim())
+      : undefined;
+    if (queries && queries.length > 5) {
+      return res.status(400).json(structuredRefusal('DISCOVERY_INVALID', 'queries must contain at most 5 entries', correlationOf(req)));
+    }
+    const maxPostsPerQuery = body.maxPostsPerQuery === undefined ? undefined : Number(body.maxPostsPerQuery);
+    if (maxPostsPerQuery !== undefined && (!Number.isInteger(maxPostsPerQuery) || maxPostsPerQuery < 1 || maxPostsPerQuery > 25)) {
+      return res.status(400).json(structuredRefusal('DISCOVERY_INVALID', 'maxPostsPerQuery must be an integer between 1 and 25', correlationOf(req)));
+    }
+    const recency = body.recency === undefined ? undefined : String(body.recency);
+    if (recency !== undefined && !['past-24h', 'past-week', 'past-month'].includes(recency)) {
+      return res.status(400).json(structuredRefusal('DISCOVERY_INVALID', 'recency must be one of past-24h, past-week, past-month', correlationOf(req)));
+    }
+    const archetype = body.archetype === undefined ? undefined : String(body.archetype);
+    if (archetype !== undefined && !['AGENCY_LEADERSHIP', 'HIRING_LEADER'].includes(archetype)) {
+      return res.status(400).json(structuredRefusal('DISCOVERY_INVALID', 'archetype must be one of AGENCY_LEADERSHIP, HIRING_LEADER', correlationOf(req)));
+    }
+    const { channel, provider } = buildContentSearchChannel();
+    const result = await withRequestTenant(req, () => channel.run(tenantId, {
+      queries,
+      recency: recency as 'past-24h' | 'past-week' | 'past-month' | undefined,
+      archetype: archetype as 'AGENCY_LEADERSHIP' | 'HIRING_LEADER' | undefined,
+      maxPostsPerQuery,
+    }));
+    res.status(201).json({ status: 'completed', provider, ...result, correlationId: correlationOf(req) });
+  } catch (err) {
+    res.status(500).json(structuredRefusal('DISCOVERY_FAILED', errorResponse(err), correlationOf(req)));
+  }
+});
+
+app.get('/api/discovery/content-insights', async (req, res) => {
+  try {
+    const tenantId = tenantOf(req);
+    const adapter = new DrizzleAdapter(db as never);
+    const rows = await withRequestTenant(req, () => adapter.findContentInsightsByTenant(tenantId));
+    res.json({ insights: rows, correlationId: correlationOf(req) });
+  } catch (err) {
+    res.status(500).json(structuredRefusal('DISCOVERY_FAILED', errorResponse(err), correlationOf(req)));
+  }
+});
+
+app.get('/api/discovery/buying-signals', async (req, res) => {
+  try {
+    const tenantId = tenantOf(req);
+    const adapter = new DrizzleAdapter(db as never);
+    const rows = await withRequestTenant(req, () => adapter.findBuyingSignalsByTenant(tenantId));
+    res.json({ signals: rows, correlationId: correlationOf(req) });
+  } catch (err) {
+    res.status(500).json(structuredRefusal('DISCOVERY_FAILED', errorResponse(err), correlationOf(req)));
+  }
+});
+
+app.post('/api/prospects/:id/promote', async (req, res) => {
+  try {
+    const tenantId = tenantOf(req);
+    const adapter = new DrizzleAdapter(db as never);
+    const result = await withRequestTenant(req, () =>
+      promoteProspect(adapter, tenantId, req.params.id, operatorOf(req), typeof req.body?.reason === 'string' ? req.body.reason : undefined),
+    );
+    res.json({ ...result, correlationId: correlationOf(req) });
+  } catch (err) {
+    if (errorResponse(err) === 'PROSPECT_NOT_FOUND') {
+      return res.status(404).json(structuredRefusal('PROSPECT_NOT_FOUND', 'Prospect not found', correlationOf(req)));
+    }
+    res.status(500).json(structuredRefusal('PROMOTION_FAILED', errorResponse(err), correlationOf(req)));
+  }
+});
+
+// ─── Channel 5: Competitor & influencer post-engager sourcing ────────────────
+
+function buildPostEngagerChannel(): PostEngagerChannel {
+  const adapter = new DrizzleAdapter(db as never);
+  return new PostEngagerChannel({
+    runner: new OpenCliPostEngagerRunner(),
+    db: adapter,
+    registry: new EngagerTargetRegistry(adapter),
+    engageProspect: (tenantId, prospectId) =>
+      engagementService.scanProspect(tenantId, prospectId).then((scan) => ({
+        draftsCreated: scan.draftsCreated,
+        postsFound: scan.postsFound,
+      })),
+  });
+}
+
+app.get('/api/discovery/engager-targets', async (req, res) => {
+  try {
+    const tenantId = tenantOf(req);
+    const activeOnly = req.query.active === '1' || req.query.active === 'true';
+    const adapter = new DrizzleAdapter(db as never);
+    const registry = new EngagerTargetRegistry(adapter);
+    const targets = await withRequestTenant(req, () => registry.list(tenantId, { activeOnly: activeOnly || undefined }));
+    res.json({ targets, correlationId: correlationOf(req) });
+  } catch (err) {
+    res.status(500).json(structuredRefusal('TENANT_FORBIDDEN', errorResponse(err), correlationOf(req)));
+  }
+});
+
+app.post('/api/discovery/engager-targets/seed', async (req, res) => {
+  try {
+    const tenantId = tenantOf(req);
+    const adapter = new DrizzleAdapter(db as never);
+    const registry = new EngagerTargetRegistry(adapter);
+    const result = await withRequestTenant(req, () => registry.seed(tenantId));
+    res.status(201).json({ ...result, correlationId: correlationOf(req) });
+  } catch (err) {
+    res.status(500).json(structuredRefusal('SEED_FAILED', errorResponse(err), correlationOf(req)));
+  }
+});
+
+app.patch('/api/discovery/engager-targets/:id', async (req, res) => {
+  try {
+    const tenantId = tenantOf(req);
+    if (typeof req.body?.isActive !== 'boolean') {
+      return res.status(400).json(structuredRefusal('TARGET_INVALID', 'isActive must be a boolean', correlationOf(req)));
+    }
+    const adapter = new DrizzleAdapter(db as never);
+    const registry = new EngagerTargetRegistry(adapter);
+    const target = await withRequestTenant(req, () => registry.setActive(tenantId, req.params.id, req.body.isActive));
+    res.json({ target, correlationId: correlationOf(req) });
+  } catch (err) {
+    if (errorResponse(err) === 'TARGET_NOT_FOUND') {
+      return res.status(404).json(structuredRefusal('TARGET_NOT_FOUND', 'Target not found', correlationOf(req)));
+    }
+    res.status(500).json(structuredRefusal('TARGET_INVALID', errorResponse(err), correlationOf(req)));
+  }
+});
+
+app.post('/api/discovery/post-engagers', async (req, res) => {
+  try {
+    const tenantId = tenantOf(req);
+    const body = req.body ?? {};
+
+    const targetIds = Array.isArray(body.targetIds)
+      ? body.targetIds.filter((t: unknown): t is string => typeof t === 'string' && t.trim().length > 0)
+      : undefined;
+    if (targetIds && targetIds.length > 11) {
+      return res.status(400).json(structuredRefusal('DISCOVERY_INVALID', 'targetIds must contain at most 11 entries', correlationOf(req)));
+    }
+
+    const maxPostsPerTarget = body.maxPostsPerTarget === undefined ? undefined : Number(body.maxPostsPerTarget);
+    if (maxPostsPerTarget !== undefined && (!Number.isInteger(maxPostsPerTarget) || maxPostsPerTarget < 1 || maxPostsPerTarget > 10)) {
+      return res.status(400).json(structuredRefusal('DISCOVERY_INVALID', 'maxPostsPerTarget must be an integer between 1 and 10', correlationOf(req)));
+    }
+
+    const maxEngagersPerPost = body.maxEngagersPerPost === undefined ? undefined : Number(body.maxEngagersPerPost);
+    if (maxEngagersPerPost !== undefined && (!Number.isInteger(maxEngagersPerPost) || maxEngagersPerPost < 1 || maxEngagersPerPost > 50)) {
+      return res.status(400).json(structuredRefusal('DISCOVERY_INVALID', 'maxEngagersPerPost must be an integer between 1 and 50', correlationOf(req)));
+    }
+
+    const recency = body.recency === undefined ? undefined : String(body.recency);
+    if (recency !== undefined && !['past-24h', 'past-week', 'past-month'].includes(recency)) {
+      return res.status(400).json(structuredRefusal('DISCOVERY_INVALID', 'recency must be one of past-24h, past-week, past-month', correlationOf(req)));
+    }
+
+    const channel = buildPostEngagerChannel();
+    const result = await withRequestTenant(req, () => channel.run(tenantId, {
+      targetIds,
+      recency: (recency as PostRecency | undefined) ?? 'past-week',
+      maxPostsPerTarget: maxPostsPerTarget ?? undefined,
+      maxEngagersPerPost: maxEngagersPerPost ?? undefined,
+    }));
+    res.status(201).json({ recency: recency ?? 'past-week', ...result, correlationId: correlationOf(req) });
+  } catch (err) {
+    const code = errorResponse(err);
+    if (code === 'NO_ACTIVE_TARGETS' || code === 'TARGET_NOT_ACTIVE' || code === 'TARGET_NOT_FOUND') {
+      return res.status(422).json(structuredRefusal(code, code === 'NO_ACTIVE_TARGETS' ? 'No active engager targets are configured' : 'One or more requested targets are inactive or unknown', correlationOf(req)));
+    }
+    res.status(500).json(structuredRefusal('DISCOVERY_FAILED', errorResponse(err), correlationOf(req)));
+  }
+});
+
 
 // ─── Server-side auto-drain worker ───────────────────────────────────────────
-// Processes one PENDING action every 180 seconds so the queue drains even if
+// Processes one PENDING action every 300 seconds so the queue drains even if
 // the browser tab is closed after clicking "Run Campaign".
 
-const AUTO_DRAIN_GAP_MS = 180_000;
+const AUTO_DRAIN_GAP_MS = 300_000;
 const AUTO_DRAIN_WORKER_ID = 'server-auto-drain-v1';
 let autoDrainRunning = false;
 let consecutiveSessionFailures = 0;
@@ -1053,6 +1273,11 @@ let consecutiveSessionFailures = 0;
 async function runAutoDrainCycle(): Promise<void> {
   if (autoDrainRunning) return; // Prevent concurrent runs
   
+  if (scanResumeRunning || engagementService.isScanningActive) {
+    console.log('[AutoDrain] ON HOLD: Prospect scanning is currently running. Skipping queue execution.');
+    return;
+  }
+
   if (consecutiveSessionFailures >= 3) {
     console.log('[AutoDrain] PAUSED due to 3 consecutive SESSION_EXPIRED errors. Please log in again and restart the server.');
     return;
@@ -1099,10 +1324,19 @@ async function runAutoDrainCycle(): Promise<void> {
     );
 
     if (result.processed) {
+      const errorCode = result.result?.errorCode ?? result.reason;
+      const EXPECTED_REFUSAL_CODES = ['COOLDOWN_ACTIVE', 'BUDGET_EXCEEDED', 'RATE_LIMITED', 'OUTSIDE_WORKING_HOURS', 'WORKING_HOURS_CLOSED', 'KILL_SWITCH_ACTIVE', 'ACCOUNT_PAUSED', 'PILOT_CAP_REACHED', 'LIKE_DISABLED', 'COMMENT_DISABLED', 'FEATURE_05_BROWSER_DISABLED', 'LEASE_UNAVAILABLE', 'SESSION_EXPIRED'];
+      const isExpected = !!errorCode && EXPECTED_REFUSAL_CODES.includes(String(errorCode));
       if (result.result?.outcomeLabel === 'failed' || result.reason) {
-        console.error(
-          `[AutoDrain] ✗ ${result.action?.actionType?.toUpperCase()} FAILED → ${result.result?.errorCode ?? result.reason}`
-        );
+        if (isExpected) {
+          console.log(
+            `[AutoDrain] ⚠ ${result.action?.actionType?.toUpperCase()} → ${errorCode}`
+          );
+        } else {
+          console.error(
+            `[AutoDrain] ✗ ${result.action?.actionType?.toUpperCase()} FAILED → ${errorCode}`
+          );
+        }
       } else {
         console.log(
           `[AutoDrain] ✓ ${result.action?.actionType?.toUpperCase()} → ${result.result?.outcomeLabel ?? 'done'}`
@@ -1161,18 +1395,27 @@ async function runAutoDrainCycle(): Promise<void> {
 
 // Status endpoint so the UI can confirm the auto-drain worker is alive
 app.get('/api/queue/drain/status', (_req, res) => {
-  res.json({ autoDrainEnabled: true, gapSeconds: AUTO_DRAIN_GAP_MS / 1000, workerId: AUTO_DRAIN_WORKER_ID, paused: consecutiveSessionFailures >= 3 });
+  res.json({
+    autoDrainEnabled: true,
+    gapSeconds: AUTO_DRAIN_GAP_MS / 1000,
+    workerId: AUTO_DRAIN_WORKER_ID,
+    paused: consecutiveSessionFailures >= 3,
+    onHold: scanResumeRunning || engagementService.isScanningActive,
+  });
 });
 
 let autoApproveRunning = false;
 async function autoApproveAndQueueCycle(): Promise<void> {
   if (autoApproveRunning) return;
+  if (scanResumeRunning || engagementService.isScanningActive) return;
   autoApproveRunning = true;
   try {
     // Check if the queue already has PENDING items. If it does, wait for it to drain first.
     const existingQueueCount = await withDbRetry(() =>
       db.query.scheduledActions.findMany({
-        where: eq(scheduledActions.status, 'PENDING')
+        where: eq(scheduledActions.status, 'PENDING'),
+        limit: 50,
+        orderBy: [asc(scheduledActions.createdAt)]
       })
     );
     
@@ -1182,20 +1425,57 @@ async function autoApproveAndQueueCycle(): Promise<void> {
 
     const pendingDrafts = await withDbRetry(() =>
       db.query.engagementDrafts.findMany({
-        where: eq(engagementDrafts.status, 'PENDING')
+        where: eq(engagementDrafts.status, 'PENDING'),
+        limit: 50,
+        orderBy: [asc(engagementDrafts.createdAt)]
       })
     );
 
     const approvedDrafts = await withDbRetry(() =>
       db.query.engagementDrafts.findMany({
-        where: eq(engagementDrafts.status, 'APPROVED')
+        where: eq(engagementDrafts.status, 'APPROVED'),
+        limit: 50,
+        orderBy: [asc(engagementDrafts.createdAt)]
       })
     );
 
-    const draftsToProcess = [
+    const allDrafts = [
       ...pendingDrafts.map((d) => ({ draft: d, needsApproval: true })),
       ...approvedDrafts.map((d) => ({ draft: d, needsApproval: false })),
     ];
+
+    if (allDrafts.length === 0) return;
+
+    // ── OPTIMIZATION: Sort drafts by prospect ICP score desc ─────────────────
+    // Fetch the latest ICP score for each unique prospect, then sort the
+    // combined draft list: highest-score prospects go first, ensuring we take
+    // action on the most valuable leads before lower-priority ones.
+    const prospectIds = [...new Set(allDrafts.map((d) => d.draft.prospectId).filter(Boolean))];
+    const scoreMap = new Map<string, number>();
+
+    await Promise.all(
+      prospectIds.map(async (pid) => {
+        try {
+          const eval_ = await withDbRetry(() =>
+            db.query.icpEvaluations.findFirst({
+              where: eq(icpEvaluations.prospectId, pid!),
+              orderBy: [desc(icpEvaluations.createdAt)],
+            })
+          );
+          scoreMap.set(pid!, eval_?.score ?? 0);
+        } catch {
+          scoreMap.set(pid!, 0);
+        }
+      })
+    );
+
+    const draftsToProcess = allDrafts.sort((a, b) => {
+      const scoreA = scoreMap.get(a.draft.prospectId ?? '') ?? 0;
+      const scoreB = scoreMap.get(b.draft.prospectId ?? '') ?? 0;
+      if (scoreB !== scoreA) return scoreB - scoreA; // higher score first
+      // Tiebreak: newer drafts first (most recently discovered prospects)
+      return new Date(b.draft.createdAt).getTime() - new Date(a.draft.createdAt).getTime();
+    });
     
     if (draftsToProcess.length > 0) {
       console.log(`[AutoQueue] Processing ${pendingDrafts.length} pending and ${approvedDrafts.length} approved drafts...`);
@@ -1243,7 +1523,8 @@ async function autoApproveAndQueueCycle(): Promise<void> {
         if (
           err.message !== 'ACTION_DUPLICATE' &&
           err.message !== 'POST_ALREADY_COMMENTED' &&
-          err.message !== 'POST_EXECUTION_UNCERTAIN'
+          err.message !== 'POST_EXECUTION_UNCERTAIN' &&
+          err.message !== 'POST_NOT_ELIGIBLE'
         ) {
           console.error(`[AutoQueue] Failed to queue draft ${draft.id}:`, err);
         }

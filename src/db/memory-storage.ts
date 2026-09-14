@@ -15,6 +15,11 @@ import {
   SequenceDefinition,
   CampaignEnrollment,
   ScheduledAction,
+  LinkedInPost,
+  ProspectBuyingSignal,
+  MarketContentInsight,
+  DiscoveryQueryStat,
+  EngagerTarget,
   DEFAULT_OPERATOR_ID,
 } from '../types.js';
 
@@ -42,6 +47,11 @@ type MemoryStorageTables = {
   accountPostComments: Array<{ tenantId: string; accountId: string; canonicalPostIdentifier: string; scheduledActionId?: string; status: 'PENDING' | 'COMPLETED' | 'FAILED' | 'UNCERTAIN' }>;
   manualTasks: Array<{ id: string; tenantId: string; scheduledActionId: string; actionType: 'LIKE' | 'COMMENT'; status: 'PENDING_CONFIRMATION' | 'COMPLETED' | 'FAILED' | 'UNCERTAIN'; outcomeLabel?: 'manual-confirmed' | 'uncertain'; confirmationActor?: string; confirmationMetadata?: Record<string, unknown>; createdAt: Date; completedAt?: Date }>;
   engagementHistory: Array<{ id: string; tenantId: string; prospectId: string; postId: string; actionType: 'LIKE' | 'COMMENT'; interactedAt: Date; operatorId: string; scheduledActionId?: string }>;
+  engagementPosts: LinkedInPost[];
+  prospectBuyingSignals: ProspectBuyingSignal[];
+  marketContentInsights: MarketContentInsight[];
+  discoveryQueryStats: DiscoveryQueryStat[];
+  engagementTargetSources: EngagerTarget[];
 };
 
 export const TERMINAL_SCHEDULED_ACTION_STATUSES: ReadonlyArray<string> = ['COMPLETED', 'FAILED', 'CANCELLED', 'UNCERTAIN'];
@@ -66,6 +76,11 @@ export class MemoryStorage implements DBAdapter, BudgetStorageAdapter, LeaseStor
     accountPostComments: [],
     manualTasks: [],
     engagementHistory: [],
+    engagementPosts: [],
+    prospectBuyingSignals: [],
+    marketContentInsights: [],
+    discoveryQueryStats: [],
+    engagementTargetSources: [],
   };
 
   // --- Prospect Methods ---
@@ -342,6 +357,7 @@ export class MemoryStorage implements DBAdapter, BudgetStorageAdapter, LeaseStor
       id: uuidv4(),
       ...action,
       status: 'PENDING',
+      attemptCount: (action as any).attemptCount ?? 0,
       createdAt: new Date(),
       updatedAt: new Date(),
     };
@@ -405,6 +421,20 @@ export class MemoryStorage implements DBAdapter, BudgetStorageAdapter, LeaseStor
     return recoveredCount;
   }
 
+  async resumePausedActions(tenantId?: string): Promise<number> {
+    const now = new Date();
+    let resumed = 0;
+    for (const action of this.tables.scheduledActions) {
+      if (action.status === 'PAUSED_BUDGET' && action.scheduledFor <= now && (!tenantId || action.tenantId === tenantId)) {
+        action.status = 'PENDING';
+        action.errorCode = undefined;
+        action.updatedAt = now;
+        resumed++;
+      }
+    }
+    return resumed;
+  }
+
   async claimNextScheduledAction(tenantId: string, accountId: string, workerId: string, claimToken?: string): Promise<ScheduledAction | undefined> {
     const now = new Date();
     const action = this.tables.scheduledActions.find(
@@ -439,7 +469,7 @@ export class MemoryStorage implements DBAdapter, BudgetStorageAdapter, LeaseStor
     return action;
   }
 
-  async updateScheduledActionResult(tenantId: string, actionId: string, result: { status: ScheduledAction['status']; outcomeLabel?: ScheduledAction['outcomeLabel']; errorCode?: string }): Promise<ScheduledAction | undefined> {
+  async updateScheduledActionResult(tenantId: string, actionId: string, result: { status: ScheduledAction['status']; outcomeLabel?: ScheduledAction['outcomeLabel']; errorCode?: string; attemptCount?: number; scheduledFor?: Date }): Promise<ScheduledAction | undefined> {
     const action = this.tables.scheduledActions.find(a => a.tenantId === tenantId && a.id === actionId);
     if (!action) return undefined;
     if (TERMINAL_SCHEDULED_ACTION_STATUSES.includes(action.status)) {
@@ -448,6 +478,8 @@ export class MemoryStorage implements DBAdapter, BudgetStorageAdapter, LeaseStor
     action.status = result.status;
     action.outcomeLabel = result.outcomeLabel;
     action.errorCode = result.errorCode;
+    if (result.attemptCount !== undefined) action.attemptCount = result.attemptCount;
+    if (result.scheduledFor !== undefined) action.scheduledFor = result.scheduledFor;
     action.updatedAt = new Date();
     if (TERMINAL_SCHEDULED_ACTION_STATUSES.includes(result.status)) action.completedAt = new Date();
     return action;
@@ -457,7 +489,7 @@ export class MemoryStorage implements DBAdapter, BudgetStorageAdapter, LeaseStor
     return this.tables.accountPostComments.some(slot => slot.tenantId === tenantId && slot.accountId === accountId && slot.scheduledActionId === actionId && slot.status === 'PENDING');
   }
 
-  async finalizeCommentAction(tenantId: string, actionId: string, result: { status: ScheduledAction['status']; outcomeLabel?: ScheduledAction['outcomeLabel']; errorCode?: string }, operatorId?: string): Promise<ScheduledAction | undefined> {
+  async finalizeCommentAction(tenantId: string, actionId: string, result: { status: ScheduledAction['status']; outcomeLabel?: ScheduledAction['outcomeLabel']; errorCode?: string; attemptCount?: number; scheduledFor?: Date }, operatorId?: string): Promise<ScheduledAction | undefined> {
     const action = this.tables.scheduledActions.find(item => item.tenantId === tenantId && item.id === actionId);
     if (!action) return undefined;
     if (TERMINAL_SCHEDULED_ACTION_STATUSES.includes(action.status)) {
@@ -492,7 +524,7 @@ export class MemoryStorage implements DBAdapter, BudgetStorageAdapter, LeaseStor
     return this.updateScheduledActionResult(tenantId, actionId, result);
   }
 
-  async finalizeEngagementAction(tenantId: string, actionId: string, result: { status: ScheduledAction['status']; outcomeLabel?: ScheduledAction['outcomeLabel']; errorCode?: string }, operatorId?: string): Promise<ScheduledAction | undefined> {
+  async finalizeEngagementAction(tenantId: string, actionId: string, result: { status: ScheduledAction['status']; outcomeLabel?: ScheduledAction['outcomeLabel']; errorCode?: string; attemptCount?: number; scheduledFor?: Date }, operatorId?: string): Promise<ScheduledAction | undefined> {
     return this.finalizeCommentAction(tenantId, actionId, result, operatorId);
   }
 
@@ -512,6 +544,114 @@ export class MemoryStorage implements DBAdapter, BudgetStorageAdapter, LeaseStor
     return actionType === 'comment'
       ? policy.checkComment(prospectId, history, now)
       : policy.checkLike(prospectId, history, now);
+  }
+
+  // --- Channel 4: Prospect discovery methods ---
+  async findProspectById(tenantId: string, prospectId: string): Promise<Prospect | undefined> {
+    return this.tables.prospects.find(p => p.tenantId === tenantId && p.id === prospectId);
+  }
+
+  async insertEngagementPost(post: Omit<LinkedInPost, 'id' | 'createdAt'>): Promise<LinkedInPost> {
+    const existing = this.tables.engagementPosts.find(
+      p => p.tenantId === post.tenantId && p.canonicalPostIdentifier === post.canonicalPostIdentifier,
+    );
+    if (existing) return existing;
+    const record: LinkedInPost = { id: uuidv4(), ...post, createdAt: new Date() };
+    this.tables.engagementPosts.push(record);
+    return record;
+  }
+
+  async insertProspectBuyingSignal(signal: Omit<ProspectBuyingSignal, 'id' | 'createdAt'>): Promise<ProspectBuyingSignal> {
+    const record: ProspectBuyingSignal = { id: uuidv4(), ...signal, createdAt: new Date() };
+    this.tables.prospectBuyingSignals.push(record);
+    return record;
+  }
+
+  async insertMarketContentInsight(insight: Omit<MarketContentInsight, 'id' | 'createdAt'>): Promise<MarketContentInsight> {
+    const record: MarketContentInsight = { id: uuidv4(), ...insight, createdAt: new Date() };
+    this.tables.marketContentInsights.push(record);
+    return record;
+  }
+
+  async upsertDiscoveryQueryStat(stat: { tenantId: string; query: string; postsFound?: number; signalsDetected?: number }): Promise<DiscoveryQueryStat> {
+    const existing = this.tables.discoveryQueryStats.find(
+      s => s.tenantId === stat.tenantId && s.query === stat.query,
+    );
+    if (existing) {
+      existing.postsFound += stat.postsFound ?? 0;
+      existing.signalsDetected += stat.signalsDetected ?? 0;
+      existing.lastSearchedAt = new Date();
+      return existing;
+    }
+    const record: DiscoveryQueryStat = {
+      id: uuidv4(),
+      tenantId: stat.tenantId,
+      query: stat.query,
+      postsFound: stat.postsFound ?? 0,
+      signalsDetected: stat.signalsDetected ?? 0,
+      prospectsPromoted: 0,
+      lastSearchedAt: new Date(),
+    };
+    this.tables.discoveryQueryStats.push(record);
+    return record;
+  }
+
+  async findBuyingSignalsByTenant(tenantId: string): Promise<ProspectBuyingSignal[]> {
+    return this.tables.prospectBuyingSignals.filter(s => s.tenantId === tenantId);
+  }
+
+  async findContentInsightsByTenant(tenantId: string): Promise<MarketContentInsight[]> {
+    return this.tables.marketContentInsights.filter(i => i.tenantId === tenantId);
+  }
+
+  async findQueryStatsByTenant(tenantId: string): Promise<DiscoveryQueryStat[]> {
+    return this.tables.discoveryQueryStats.filter(s => s.tenantId === tenantId);
+  }
+
+  async incrementQueryStatPromoted(tenantId: string, query: string): Promise<void> {
+    const stat = this.tables.discoveryQueryStats.find(s => s.tenantId === tenantId && s.query === query);
+    if (stat) {
+      stat.prospectsPromoted += 1;
+    }
+  }
+
+  // --- Channel 5: Target registry methods ---
+  async listEngagerTargets(tenantId: string, opts?: { activeOnly?: boolean }): Promise<EngagerTarget[]> {
+    const rows = this.tables.engagementTargetSources.filter(t => t.tenantId === tenantId);
+    return opts?.activeOnly ? rows.filter(t => t.isActive) : rows;
+  }
+
+  async upsertEngagerTarget(target: Omit<EngagerTarget, 'id' | 'createdAt' | 'updatedAt' | 'isActive'> & { isActive?: boolean }): Promise<EngagerTarget> {
+    const existing = this.tables.engagementTargetSources.find(
+      t => t.tenantId === target.tenantId && t.normalizedUrl === target.normalizedUrl,
+    );
+    if (existing) return existing;
+    const record: EngagerTarget = {
+      id: uuidv4(),
+      tenantId: target.tenantId,
+      targetType: target.targetType,
+      displayName: target.displayName,
+      linkedinUrl: target.linkedinUrl,
+      normalizedUrl: target.normalizedUrl,
+      isActive: target.isActive ?? true,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    this.tables.engagementTargetSources.push(record);
+    return record;
+  }
+
+  async updateEngagerTargetActive(tenantId: string, targetId: string, isActive: boolean): Promise<EngagerTarget | undefined> {
+    const target = this.tables.engagementTargetSources.find(t => t.tenantId === tenantId && t.id === targetId);
+    if (target) {
+      target.isActive = isActive;
+      target.updatedAt = new Date();
+    }
+    return target;
+  }
+
+  async findEngagerTargetById(tenantId: string, targetId: string): Promise<EngagerTarget | undefined> {
+    return this.tables.engagementTargetSources.find(t => t.tenantId === tenantId && t.id === targetId);
   }
 
   // --- Test utility methods ---
@@ -539,6 +679,11 @@ export class MemoryStorage implements DBAdapter, BudgetStorageAdapter, LeaseStor
       accountPostComments: [],
       manualTasks: [],
       engagementHistory: [],
+      engagementPosts: [],
+      prospectBuyingSignals: [],
+      marketContentInsights: [],
+      discoveryQueryStats: [],
+      engagementTargetSources: [],
     };
   }
 }

@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { and, eq, gte, lt, sql, lte } from 'drizzle-orm';
 import { PgliteDatabase } from 'drizzle-orm/pglite';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
-import { Prospect, IcpEvaluation, ImportBatch, IcpDefinition, ProspectStage, ReviewDecision, AuditEvent, DEFAULT_OPERATOR_ID } from '../types.js';
+import { Prospect, IcpEvaluation, ImportBatch, IcpDefinition, ProspectStage, ReviewDecision, AuditEvent, DEFAULT_OPERATOR_ID, LinkedInPost, ProspectBuyingSignal, MarketContentInsight, DiscoveryQueryStat, EngagerTarget } from '../types.js';
 import { DBAdapter } from './db-adapter.js';
 import { BudgetStorageAdapter } from '../services/budget-storage-adapter.js';
 import { LeaseStorageAdapter } from '../services/lease-storage-adapter.js';
@@ -11,7 +11,7 @@ import { CooldownPolicy } from '../services/engagement/cooldown-policy.js';
 import * as schema from './schema.js';
 import { assertTenantId, requireTenantId } from './tenant-context.js';
 import { withDbRetry } from './retry.js';
-import { dailyActionBudgets, budgetReservations, prospects, icpEvaluations, importBatches, icpDefinitions, accountLeases, reviewDecisions, auditEvents, scheduledActions, manualTasks, accountPostComments, engagementHistory, engagementPosts, engagementDrafts, recommendationRevisions } from './schema.js';
+import { dailyActionBudgets, budgetReservations, prospects, icpEvaluations, importBatches, icpDefinitions, accountLeases, reviewDecisions, auditEvents, scheduledActions, manualTasks, accountPostComments, engagementHistory, engagementPosts, engagementDrafts, recommendationRevisions, prospectBuyingSignals, marketContentInsights, discoveryQueryStats, engagementTargetSources } from './schema.js';
 
 
 export const TERMINAL_SCHEDULED_ACTION_STATUSES: ReadonlyArray<string> = ['COMPLETED', 'FAILED', 'CANCELLED', 'UNCERTAIN'];
@@ -284,6 +284,25 @@ export class DrizzleAdapter implements DBAdapter, BudgetStorageAdapter, LeaseSto
         });
     }
 
+    async resumePausedActions(tenantId?: string): Promise<number> {
+        return withDbRetry(async () => {
+            const tenantFilter = tenantId ? sql`AND "tenant_id" = ${tenantId}::uuid` : sql``;
+            const resumed = await this.db.execute(sql`
+                UPDATE "scheduled_actions"
+                SET
+                    "status" = 'PENDING',
+                    "error_code" = NULL,
+                    "updated_at" = now()
+                WHERE "status" = 'PAUSED_BUDGET'
+                  AND "scheduled_for" <= now()
+                  ${tenantFilter}
+                RETURNING "id";
+            `);
+            const rows = (resumed as unknown as { rows?: Array<Record<string, unknown>> }).rows ?? [];
+            return rows.length;
+        });
+    }
+
     async claimNextScheduledAction(tenantId: string, accountId: string, workerId: string, claimToken?: string) {
         assertTenantId(tenantId);
         const { randomUUID } = await import('node:crypto');
@@ -332,6 +351,7 @@ export class DrizzleAdapter implements DBAdapter, BudgetStorageAdapter, LeaseSto
                 mode: (row.mode as import('../types.js').ScheduledAction['mode']) ?? undefined,
                 outcomeLabel: (row.outcome_label as import('../types.js').ScheduledAction['outcomeLabel']) ?? undefined,
                 errorCode: (row.error_code as string) ?? undefined,
+                attemptCount: (row.attempt_count as number) ?? 0,
                 claimedBy: (row.claimed_by as string) ?? undefined,
                 claimedAt: row.claimed_at ? new Date(row.claimed_at as string) : undefined,
                 completedAt: row.completed_at ? new Date(row.completed_at as string) : undefined,
@@ -354,7 +374,7 @@ export class DrizzleAdapter implements DBAdapter, BudgetStorageAdapter, LeaseSto
         });
     }
 
-    async updateScheduledActionResult(tenantId: string, actionId: string, result: { status: import('../types.js').ScheduledAction['status']; outcomeLabel?: import('../types.js').ScheduledAction['outcomeLabel']; errorCode?: string }) {
+    async updateScheduledActionResult(tenantId: string, actionId: string, result: { status: import('../types.js').ScheduledAction['status']; outcomeLabel?: import('../types.js').ScheduledAction['outcomeLabel']; errorCode?: string; attemptCount?: number; scheduledFor?: Date }) {
         assertTenantId(tenantId);
         return withDbRetry(async () => {
             const current = await this.db.query.scheduledActions.findFirst({ where: and(eq(scheduledActions.id, actionId), eq(scheduledActions.tenantId, tenantId)) });
@@ -362,7 +382,18 @@ export class DrizzleAdapter implements DBAdapter, BudgetStorageAdapter, LeaseSto
             if (TERMINAL_SCHEDULED_ACTION_STATUSES.includes(current.status)) {
                 throw new Error('TERMINAL_STATE_IMMUTABLE');
             }
-            const rows = await this.db.update(scheduledActions).set({ status: result.status, outcomeLabel: result.outcomeLabel, errorCode: result.errorCode, completedAt: TERMINAL_SCHEDULED_ACTION_STATUSES.includes(result.status) ? new Date() : undefined, updatedAt: new Date() }).where(and(eq(scheduledActions.id, actionId), eq(scheduledActions.tenantId, tenantId))).returning();
+            const setValues: any = {
+                status: result.status,
+                outcomeLabel: result.outcomeLabel,
+                errorCode: result.errorCode,
+                updatedAt: new Date(),
+            };
+            if (result.attemptCount !== undefined) setValues.attemptCount = result.attemptCount;
+            if (result.scheduledFor !== undefined) setValues.scheduledFor = result.scheduledFor;
+            if (TERMINAL_SCHEDULED_ACTION_STATUSES.includes(result.status)) {
+                setValues.completedAt = new Date();
+            }
+            const rows = await this.db.update(scheduledActions).set(setValues).where(and(eq(scheduledActions.id, actionId), eq(scheduledActions.tenantId, tenantId))).returning();
             return rows[0] as import('../types.js').ScheduledAction | undefined;
         });
     }
@@ -378,7 +409,7 @@ export class DrizzleAdapter implements DBAdapter, BudgetStorageAdapter, LeaseSto
         return !!slot;
     }
 
-    async finalizeCommentAction(tenantId: string, actionId: string, result: { status: import('../types.js').ScheduledAction['status']; outcomeLabel?: import('../types.js').ScheduledAction['outcomeLabel']; errorCode?: string }, operatorId?: string) {
+    async finalizeCommentAction(tenantId: string, actionId: string, result: { status: import('../types.js').ScheduledAction['status']; outcomeLabel?: import('../types.js').ScheduledAction['outcomeLabel']; errorCode?: string; attemptCount?: number; scheduledFor?: Date }, operatorId?: string) {
         assertTenantId(tenantId);
         return withDbRetry(async () => {
             return this.db.transaction(async (tx) => {
@@ -391,7 +422,11 @@ export class DrizzleAdapter implements DBAdapter, BudgetStorageAdapter, LeaseSto
                     throw new Error('TERMINAL_STATE_IMMUTABLE');
                 }
                 const terminal = ['COMPLETED', 'FAILED', 'UNCERTAIN'].includes(result.status);
-                const rows = await tx.update(scheduledActions).set({ status: result.status, outcomeLabel: result.outcomeLabel, errorCode: result.errorCode, completedAt: terminal ? new Date() : undefined, updatedAt: new Date() }).where(and(eq(scheduledActions.id, actionId), eq(scheduledActions.tenantId, tenantId))).returning();
+                const setValues: any = { status: result.status, outcomeLabel: result.outcomeLabel, errorCode: result.errorCode, updatedAt: new Date() };
+                if (result.attemptCount !== undefined) setValues.attemptCount = result.attemptCount;
+                if (result.scheduledFor !== undefined) setValues.scheduledFor = result.scheduledFor;
+                if (terminal) setValues.completedAt = new Date();
+                const rows = await tx.update(scheduledActions).set(setValues).where(and(eq(scheduledActions.id, actionId), eq(scheduledActions.tenantId, tenantId))).returning();
                 if (current.actionType === 'comment' && terminal) {
                     const slotRows = await tx.update(accountPostComments).set({ status: result.status, updatedAt: new Date() }).where(and(
                         eq(accountPostComments.tenantId, tenantId),
@@ -509,5 +544,142 @@ export class DrizzleAdapter implements DBAdapter, BudgetStorageAdapter, LeaseSto
             }, operatorId);
         }
         return rows[0] as { status: string; outcomeLabel?: 'manual-confirmed' | 'uncertain' };
+    }
+
+    // --- Channel 4: Prospect discovery methods ---
+
+    async findProspectById(tenantId: string, prospectId: string): Promise<Prospect | undefined> {
+        assertTenantId(tenantId);
+        return this.db.query.prospects.findFirst({
+            where: and(eq(prospects.tenantId, tenantId), eq(prospects.id, prospectId)),
+        }) as Promise<Prospect | undefined>;
+    }
+
+    async insertEngagementPost(post: Omit<LinkedInPost, 'id' | 'createdAt'>): Promise<LinkedInPost> {
+        assertTenantId(post.tenantId);
+        const inserted = await this.db.insert(engagementPosts).values(post).onConflictDoNothing().returning();
+        if (inserted[0]) return inserted[0] as LinkedInPost;
+        const existing = await this.db.query.engagementPosts.findFirst({
+            where: and(
+                eq(engagementPosts.tenantId, post.tenantId),
+                eq(engagementPosts.canonicalPostIdentifier, post.canonicalPostIdentifier),
+            ),
+        });
+        if (!existing) throw new Error('POST_INSERT_CONFLICT_UNRESOLVED');
+        return existing as LinkedInPost;
+    }
+
+    async insertProspectBuyingSignal(signal: Omit<ProspectBuyingSignal, 'id' | 'createdAt'>): Promise<ProspectBuyingSignal> {
+        assertTenantId(signal.tenantId);
+        const result = await this.db.insert(prospectBuyingSignals).values(signal).returning();
+        return result[0] as ProspectBuyingSignal;
+    }
+
+    async insertMarketContentInsight(insight: Omit<MarketContentInsight, 'id' | 'createdAt'>): Promise<MarketContentInsight> {
+        assertTenantId(insight.tenantId);
+        const result = await this.db.insert(marketContentInsights).values(insight).returning();
+        return result[0] as MarketContentInsight;
+    }
+
+    async upsertDiscoveryQueryStat(stat: { tenantId: string; query: string; postsFound?: number; signalsDetected?: number }): Promise<DiscoveryQueryStat> {
+        assertTenantId(stat.tenantId);
+        const result = await this.db.insert(discoveryQueryStats).values({
+            tenantId: stat.tenantId,
+            query: stat.query,
+            postsFound: stat.postsFound ?? 0,
+            signalsDetected: stat.signalsDetected ?? 0,
+            lastSearchedAt: new Date(),
+        }).onConflictDoUpdate({
+            target: [discoveryQueryStats.tenantId, discoveryQueryStats.query],
+            set: {
+                postsFound: sql`${discoveryQueryStats.postsFound} + EXCLUDED.posts_found`,
+                signalsDetected: sql`${discoveryQueryStats.signalsDetected} + EXCLUDED.signals_detected`,
+                lastSearchedAt: new Date(),
+            },
+        }).returning();
+        return result[0] as DiscoveryQueryStat;
+    }
+
+    async findBuyingSignalsByTenant(tenantId: string): Promise<ProspectBuyingSignal[]> {
+        assertTenantId(tenantId);
+        return this.db.select().from(prospectBuyingSignals)
+            .where(eq(prospectBuyingSignals.tenantId, tenantId))
+            .orderBy(sql`${prospectBuyingSignals.createdAt} desc`) as Promise<ProspectBuyingSignal[]>;
+    }
+
+    async findContentInsightsByTenant(tenantId: string): Promise<MarketContentInsight[]> {
+        assertTenantId(tenantId);
+        return this.db.select().from(marketContentInsights)
+            .where(eq(marketContentInsights.tenantId, tenantId))
+            .orderBy(sql`${marketContentInsights.createdAt} desc`) as Promise<MarketContentInsight[]>;
+    }
+
+    async findQueryStatsByTenant(tenantId: string): Promise<DiscoveryQueryStat[]> {
+        assertTenantId(tenantId);
+        return this.db.select().from(discoveryQueryStats)
+            .where(eq(discoveryQueryStats.tenantId, tenantId))
+            .orderBy(sql`${discoveryQueryStats.lastSearchedAt} desc`) as Promise<DiscoveryQueryStat[]>;
+    }
+
+    async incrementQueryStatPromoted(tenantId: string, query: string): Promise<void> {
+        assertTenantId(tenantId);
+        await this.db.update(discoveryQueryStats)
+            .set({ prospectsPromoted: sql`${discoveryQueryStats.prospectsPromoted} + 1` })
+            .where(and(eq(discoveryQueryStats.tenantId, tenantId), eq(discoveryQueryStats.query, query)));
+    }
+
+    // --- Channel 5: Target registry methods ---
+
+    async listEngagerTargets(tenantId: string, opts?: { activeOnly?: boolean }): Promise<EngagerTarget[]> {
+        assertTenantId(tenantId);
+        const conditions = [eq(engagementTargetSources.tenantId, tenantId)];
+        if (opts?.activeOnly) conditions.push(eq(engagementTargetSources.isActive, true));
+        return this.db.select().from(engagementTargetSources)
+            .where(and(...conditions))
+            .orderBy(sql`${engagementTargetSources.createdAt} asc`) as Promise<EngagerTarget[]>;
+    }
+
+    async upsertEngagerTarget(target: Omit<EngagerTarget, 'id' | 'createdAt' | 'updatedAt' | 'isActive'> & { isActive?: boolean }): Promise<EngagerTarget> {
+        assertTenantId(target.tenantId);
+        const existing = await this.db.query.engagementTargetSources.findFirst({
+            where: and(
+                eq(engagementTargetSources.tenantId, target.tenantId),
+                eq(engagementTargetSources.normalizedUrl, target.normalizedUrl),
+            ),
+        });
+        if (existing) return existing as EngagerTarget;
+        const inserted = await this.db.insert(engagementTargetSources).values({
+            tenantId: target.tenantId,
+            targetType: target.targetType,
+            displayName: target.displayName,
+            linkedinUrl: target.linkedinUrl,
+            normalizedUrl: target.normalizedUrl,
+            isActive: target.isActive ?? true,
+        }).onConflictDoNothing().returning();
+        if (inserted[0]) return inserted[0] as EngagerTarget;
+        const reRead = await this.db.query.engagementTargetSources.findFirst({
+            where: and(
+                eq(engagementTargetSources.tenantId, target.tenantId),
+                eq(engagementTargetSources.normalizedUrl, target.normalizedUrl),
+            ),
+        });
+        if (!reRead) throw new Error('TARGET_INSERT_CONFLICT_UNRESOLVED');
+        return reRead as EngagerTarget;
+    }
+
+    async updateEngagerTargetActive(tenantId: string, targetId: string, isActive: boolean): Promise<EngagerTarget | undefined> {
+        assertTenantId(tenantId);
+        const rows = await this.db.update(engagementTargetSources)
+            .set({ isActive, updatedAt: new Date() })
+            .where(and(eq(engagementTargetSources.tenantId, tenantId), eq(engagementTargetSources.id, targetId)))
+            .returning();
+        return rows[0] as EngagerTarget | undefined;
+    }
+
+    async findEngagerTargetById(tenantId: string, targetId: string): Promise<EngagerTarget | undefined> {
+        assertTenantId(tenantId);
+        return this.db.query.engagementTargetSources.findFirst({
+            where: and(eq(engagementTargetSources.tenantId, tenantId), eq(engagementTargetSources.id, targetId)),
+        }) as Promise<EngagerTarget | undefined>;
     }
 }

@@ -1,5 +1,5 @@
 
-import { pgTable, text, timestamp, uuid, varchar, json, boolean, integer, pgEnum, uniqueIndex, real } from 'drizzle-orm/pg-core';
+import { pgTable, text, timestamp, uuid, varchar, json, boolean, integer, pgEnum, uniqueIndex, real, index } from 'drizzle-orm/pg-core';
 
 export const prospectStageEnum = pgEnum('prospect_stage', [
   'INGESTED',
@@ -182,6 +182,7 @@ export const scheduledActions = pgTable('scheduled_actions', {
   mode: varchar('mode', { length: 20 }),
   outcomeLabel: varchar('outcome_label', { length: 30 }),
   errorCode: varchar('error_code', { length: 80 }),
+  attemptCount: integer('attempt_count').default(0).notNull(),
   claimToken: text('claim_token'),
     claimedBy: varchar('claimed_by', { length: 255 }),
     claimedAt: timestamp('claimed_at'),
@@ -194,7 +195,7 @@ export const scheduledActions = pgTable('scheduled_actions', {
 
 // ─── Feature 2: Engagement tables ────────────────────────────────────────────
 
-export const postSourceTypeEnum = pgEnum('post_source_type', ['PLAYWRIGHT', 'FIXTURE', 'MANUAL']);
+export const postSourceTypeEnum = pgEnum('post_source_type', ['PLAYWRIGHT', 'FIXTURE', 'MANUAL', 'POST_KEYWORD_SEARCH']);
 export const draftStatusEnum = pgEnum('draft_status', ['PENDING', 'APPROVED', 'EDITED', 'SKIPPED', 'REJECTED']);
 export const engagementActionTypeEnum = pgEnum('engagement_action_type', ['LIKE', 'COMMENT']);
 
@@ -341,4 +342,85 @@ export const accountPostComments = pgTable('account_post_comments', {
 }, (table) => ({
   // Guarantees at most one row per account+post — the core deduplication constraint
   accountCanonicalPostUniqueIdx: uniqueIndex('account_canonical_post_unique_idx').on(table.tenantId, table.accountId, table.canonicalPostIdentifier),
+}));
+
+// ─── Channel 4: Prospect discovery (buying signals, market insights, query stats) ──
+
+export const prospectBuyingSignalCategoryEnum = pgEnum('prospect_buying_signal_category', [
+  'BD_PIPELINE_FEAST_FAMINE',
+  'COLD_OUTREACH_FATIGUE',
+  'CONTINGENCY_VS_RETAINER',
+  'FEE_EROSION',
+  'CLIENT_GHOSTING',
+  'TIRED_OF_COLD_CALLING',
+  'MANUAL_SOURCING_FATIGUE',
+  'CANDIDATE_GHOSTING',
+  'ATS_LIMITATIONS',
+  'OTHER',
+]);
+
+export const prospectBuyingSignalUrgencyEnum = pgEnum('prospect_buying_signal_urgency', ['HIGH', 'MEDIUM', 'LOW']);
+
+export const prospectBuyingSignals = pgTable('prospect_buying_signals', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  prospectId: uuid('prospect_id').notNull().references(() => prospects.id),
+  postId: uuid('post_id').references(() => engagementPosts.id),
+  tenantId: text('tenant_id').notNull(),
+  archetype: text('archetype').notNull(),
+  signalCategory: prospectBuyingSignalCategoryEnum('signal_category').notNull(),
+  signalScore: integer('signal_score').notNull(),
+  urgency: prospectBuyingSignalUrgencyEnum('urgency').notNull(),
+  extractedEmails: json('extracted_emails'),
+  extractedLinks: json('extracted_links'),
+  whatTheyNeed: text('what_they_need'),
+  evidenceQuote: text('evidence_quote'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+}, (table) => ({
+  tenantProspectIdx: index('prospect_buying_signals_tenant_prospect_idx').on(table.tenantId, table.prospectId),
+}));
+
+export const marketContentInsights = pgTable('market_content_insights', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: text('tenant_id').notNull(),
+  sourcePostId: text('source_post_id'),
+  authorProfileUrl: text('author_profile_url').notNull(),
+  category: text('category').notNull(),
+  rawVerbatimQuote: text('raw_verbatim_quote').notNull(),
+  emotionalSentiment: text('emotional_sentiment'),
+  suggestedContentHook: text('suggested_content_hook'),
+  toolsMentioned: json('tools_mentioned'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+}, (table) => ({
+  tenantIdx: index('market_content_insights_tenant_idx').on(table.tenantId),
+}));
+
+export const discoveryQueryStats = pgTable('discovery_query_stats', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: text('tenant_id').notNull(),
+  query: text('query').notNull(),
+  postsFound: integer('posts_found').default(0).notNull(),
+  signalsDetected: integer('signals_detected').default(0).notNull(),
+  prospectsPromoted: integer('prospects_promoted').default(0).notNull(),
+  lastSearchedAt: timestamp('last_searched_at').defaultNow().notNull(),
+}, (table) => ({
+  tenantQueryIdx: uniqueIndex('discovery_query_stats_tenant_query_idx').on(table.tenantId, table.query),
+}));
+
+// ─── Channel 5: Competitor & influencer post-engager sourcing ────────────────
+
+export const engagerTargetTypeEnum = pgEnum('engager_target_type', ['COMPETITOR', 'INFLUENCER']);
+
+export const engagementTargetSources = pgTable('engagement_target_sources', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull(),
+  targetType: engagerTargetTypeEnum('target_type').notNull(),
+  displayName: varchar('display_name', { length: 255 }).notNull(),
+  linkedinUrl: varchar('linkedin_url', { length: 255 }).notNull(),
+  normalizedUrl: text('normalized_url').notNull(),
+  isActive: boolean('is_active').default(true).notNull(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+}, (table) => ({
+  tenantNormalizedUrlIdx: uniqueIndex('engager_target_tenant_url_idx').on(table.tenantId, table.normalizedUrl),
+  tenantActiveIdx: index('engager_target_tenant_active_idx').on(table.tenantId, table.isActive),
 }));

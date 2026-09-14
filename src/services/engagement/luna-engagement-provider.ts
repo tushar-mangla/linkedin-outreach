@@ -10,23 +10,29 @@ import type { EngagementAIProvider, GenerateCommentInput } from './engagement-ai
 //   CODEX_EVERYWHERE_API_KEY  — API key for codex-everywhere
 //   CODEX_EVERYWHERE_BASE_URL — Base URL (default: https://api.codex-everywhere.com/v1)
 
-const DEFAULT_BASE_URL = 'https://api.codex-everywhere.com/v1';
-const MODEL = 'gpt-5.6-luna';
+const LUNA_BASE_URL = 'https://api.codex-everywhere.com/v1';
+const GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/openai/';
 const TIMEOUT_MS = 30_000;
 
 export class LunaEngagementProvider implements EngagementAIProvider {
-  readonly providerName = 'luna' as const;
+  readonly providerName: 'luna' | 'gemini';
 
   private readonly apiKey: string;
   private readonly baseUrl: string;
+  private readonly model: string;
+  private readonly isGemini: boolean;
 
   constructor(opts?: { apiKey?: string; baseUrl?: string }) {
-    this.apiKey = opts?.apiKey ?? process.env.CODEX_EVERYWHERE_API_KEY ?? '';
-    this.baseUrl = opts?.baseUrl ?? process.env.CODEX_EVERYWHERE_BASE_URL ?? DEFAULT_BASE_URL;
+    const geminiKey = process.env.GEMINI_API_KEY ?? '';
+    this.isGemini = !opts?.apiKey && !!geminiKey;
+    this.apiKey = opts?.apiKey ?? (geminiKey || process.env.CODEX_EVERYWHERE_API_KEY || '');
+    this.baseUrl = opts?.baseUrl ?? (this.isGemini ? (process.env.GEMINI_BASE_URL ?? GEMINI_BASE_URL) : (process.env.CODEX_EVERYWHERE_BASE_URL ?? LUNA_BASE_URL));
+    this.model = this.isGemini ? (process.env.GEMINI_MODEL ?? 'gemini-2.5-flash') : (process.env.CODEX_EVERYWHERE_MODEL ?? 'gpt-5.6-luna');
+    this.providerName = this.isGemini ? 'gemini' : 'luna';
 
     if (!this.apiKey) {
       throw new Error(
-        'LunaEngagementProvider: CODEX_EVERYWHERE_API_KEY is not set. ' +
+        'LunaEngagementProvider: GEMINI_API_KEY or CODEX_EVERYWHERE_API_KEY is not set. ' +
         'Add it to your .env file.',
       );
     }
@@ -72,7 +78,7 @@ export class LunaEngagementProvider implements EngagementAIProvider {
           Authorization: `Bearer ${this.apiKey}`,
         },
         body: JSON.stringify({
-          model: MODEL,
+          model: this.model,
           messages: [
             { role: 'system', content: systemPrompt },
             { role: 'user', content: userPrompt },
@@ -117,7 +123,7 @@ export class LunaEngagementProvider implements EngagementAIProvider {
     return {
       commentText,
       groundingEvidence: firstSentence,
-      providerMeta: { model: MODEL, provider: 'codex-everywhere' },
+      providerMeta: { model: this.model, provider: this.providerName },
     };
   }
 
@@ -150,7 +156,7 @@ export class LunaEngagementProvider implements EngagementAIProvider {
           Authorization: `Bearer ${this.apiKey}`,
         },
         body: JSON.stringify({
-          model: MODEL,
+           model: this.model,
           messages: [
             { role: 'system', content: systemPrompt },
             { role: 'user', content: userPrompt },
